@@ -13,6 +13,7 @@
  */
 
 #include <stdio.h>
+#include <stdint.h>
 #include <string.h>
 
 #include "freertos/FreeRTOS.h"
@@ -43,6 +44,7 @@ static esp_io_expander_handle_t io_expander = NULL;
 static lv_obj_t *touch_dot = NULL;
 
 static int64_t prof_xpose = 0, prof_flush = 0, prof_period = 0;
+static int64_t prof_period_min = INT64_MAX;
 static int64_t last_flush_start = 0;
 static int prof_frames = 0;
 
@@ -141,7 +143,12 @@ static void example_lvgl_flush_cb(lv_display_t * disp, const lv_area_t * area, u
     int64_t t_start = esp_timer_get_time();
     if (last_flush_start)
     {
-        prof_period += t_start - last_flush_start;
+        int64_t period = t_start - last_flush_start;
+        prof_period += period;
+        if (period < prof_period_min)
+        {
+            prof_period_min = period;
+        }
     }
     last_flush_start = t_start;
     for (int c = 0; c < flush_coun; c++)
@@ -184,35 +191,68 @@ static void example_lvgl_flush_cb(lv_display_t * disp, const lv_area_t * area, u
 
     if (++prof_frames >= 30)
     {
-        ESP_LOGI(TAG, "frame us: period=%d flush=%d xpose=%d",
-                 (int)(prof_period / 30), (int)(prof_flush / 30), (int)(prof_xpose / 30));
+        ESP_LOGI(TAG, "frame us: period=%d min=%d flush=%d xpose=%d",
+                 (int)(prof_period / 30), (int)prof_period_min,
+                 (int)(prof_flush / 30), (int)(prof_xpose / 30));
         prof_period = prof_flush = prof_xpose = 0;
+        prof_period_min = INT64_MAX;
         prof_frames = 0;
     }
     lv_disp_flush_ready(disp);
 }
 
-static void TouchInputReadCallback(lv_indev_t * indev, lv_indev_data_t *indevData)
+typedef struct {
+    bool pressed;
+    uint16_t x; /* native 172x640 space */
+    uint16_t y;
+} touch_state_t;
+
+static touch_state_t touch_state;
+static SemaphoreHandle_t touch_mux = NULL;
+
+/*
+ * Reads the touch controller on its own task so the LVGL task never blocks on
+ * I2C. The LVGL indev callback only copies the cached state.
+ */
+static void touch_read_task(void *arg)
 {
     uint8_t read_touchpad_cmd[11] = {0xb5, 0xab, 0xa5, 0x5a, 0x0, 0x0, 0x0, 0x0e,0x0, 0x0, 0x0};
-    uint8_t buff[32] = {0};
-    ESP_ERROR_CHECK_WITHOUT_ABORT(i2c_master_write_read_dev(disp_touch_dev_handle,read_touchpad_cmd,11,buff,32));
-    uint16_t pointX;
-    uint16_t pointY;
-    pointX = (((uint16_t)buff[2] & 0x0f) << 8) | (uint16_t)buff[3];
-    pointY = (((uint16_t)buff[4] & 0x0f) << 8) | (uint16_t)buff[5];
-    if (buff[1]>0 && buff[1]<5)
+    for (;;)
     {
-        /*
-         * The touch controller reports in 640x172 (landscape) space.
-         * Map it to the display's native 172x640 space; LVGL then applies
-         * the display rotation itself (lv_display_rotate_point), so the
-         * callback must NOT pre-rotate.
-         */
-        if(pointX > EXAMPLE_LCD_V_RES) pointX = EXAMPLE_LCD_V_RES;
-        if(pointY > EXAMPLE_LCD_H_RES) pointY = EXAMPLE_LCD_H_RES;
-        indevData->point.x = pointY;
-        indevData->point.y = (EXAMPLE_LCD_V_RES - pointX);
+        uint8_t buff[32] = {0};
+        if (i2c_master_write_read_dev(disp_touch_dev_handle, read_touchpad_cmd, 11, buff, 32) == ESP_OK)
+        {
+            uint16_t pointX = (((uint16_t)buff[2] & 0x0f) << 8) | (uint16_t)buff[3];
+            uint16_t pointY = (((uint16_t)buff[4] & 0x0f) << 8) | (uint16_t)buff[5];
+            /*
+             * The touch controller reports in 640x172 (landscape) space; map it
+             * to the display's native 172x640 space. LVGL applies the display
+             * rotation itself (lv_display_rotate_point).
+             */
+            if (pointX > EXAMPLE_LCD_V_RES) pointX = EXAMPLE_LCD_V_RES;
+            if (pointY > EXAMPLE_LCD_H_RES) pointY = EXAMPLE_LCD_H_RES;
+
+            xSemaphoreTake(touch_mux, portMAX_DELAY);
+            touch_state.pressed = (buff[1] > 0 && buff[1] < 5);
+            touch_state.x = pointY;
+            touch_state.y = (EXAMPLE_LCD_V_RES - pointX);
+            xSemaphoreGive(touch_mux);
+        }
+        vTaskDelay(pdMS_TO_TICKS(4));
+    }
+}
+
+static void TouchInputReadCallback(lv_indev_t * indev, lv_indev_data_t *indevData)
+{
+    touch_state_t st;
+    xSemaphoreTake(touch_mux, portMAX_DELAY);
+    st = touch_state;
+    xSemaphoreGive(touch_mux);
+
+    if (st.pressed)
+    {
+        indevData->point.x = st.x;
+        indevData->point.y = st.y;
         indevData->state = LV_INDEV_STATE_PRESSED;
 
         if (touch_dot)
@@ -312,6 +352,9 @@ void app_main(void)
     flush_done_semaphore = xSemaphoreCreateBinary();
     assert(flush_done_semaphore);
     touch_i2c_master_Init();
+    touch_mux = xSemaphoreCreateMutex();
+    assert(touch_mux);
+    xTaskCreatePinnedToCore(touch_read_task, "touch", 4 * 1024, NULL, 3, NULL, 1);
     example_lcd_exio_init();
     ESP_LOGI(TAG, "Initialize SPI bus");
 
