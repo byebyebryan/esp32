@@ -27,6 +27,7 @@
 #include "esp_lcd_panel_ops.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_async_memcpy.h"
 #include "esp_io_expander_tca9554.h"
 
 #include "lvgl.h"
@@ -41,6 +42,28 @@ static SemaphoreHandle_t lvgl_mux = NULL;
 static SemaphoreHandle_t flush_done_semaphore = NULL;
 
 static uint16_t *trans_buf[2];
+static uint16_t *shadow = NULL;
+
+/*
+ * The shadow lives in PSRAM, and a plain memcpy of 220KB per frame costs about
+ * as much CPU as the transpose did. Use the GDMA-backed async memcpy instead:
+ * the copy runs on its own DMA engine (overlapping the SPI transfer) and the
+ * CPU only waits on a semaphore.
+ */
+static async_memcpy_handle_t s_mcp = NULL;
+static SemaphoreHandle_t s_mcp_done = NULL;
+
+static bool mcp_done_cb(async_memcpy_handle_t mcp, async_memcpy_event_t *event, void *cb_args)
+{
+    BaseType_t high_task_woken = pdFALSE;
+    xSemaphoreGiveFromISR(s_mcp_done, &high_task_woken);
+    return high_task_woken == pdTRUE;
+}
+
+/* Dirty areas above this many pixels rebuild the whole shadow instead of
+ * transposing the rectangle (the strided rectangle transpose loses to the
+ * cache-friendly full rebuild beyond roughly this size). */
+#define SHADOW_REBUILD_MAX_PIXELS 16384
 static esp_io_expander_handle_t io_expander = NULL;
 static lv_obj_t *touch_dot = NULL;
 
@@ -133,11 +156,74 @@ static void example_lcd_backlight_set(bool enable)
     ESP_ERROR_CHECK(esp_io_expander_set_level(io_expander, EXAMPLE_EXIO_PIN_BL_EN, enable ? 1 : 0));
 }
 
-static void lcd_send_full_frame(esp_lcd_panel_handle_t panel_handle, uint8_t *color_p)
+/*
+ * Shadow framebuffer in the panel's native orientation (172x640, big-endian
+ * RGB565), kept in sync incrementally: each flush transposes only its dirty
+ * rectangle into the shadow, so the 90-degree transpose cost is proportional to
+ * what changed instead of a full 110K-pixel pass per frame. Sending a frame is
+ * then a plain copy of the shadow - the panel still requires complete frames,
+ * but there is no per-frame transpose.
+ */
+static void shadow_update(const lv_area_t *area, const uint16_t *src)
+{
+    /* UI (landscape 640x172) -> native (172x640):
+     *   native_x = ui_y,  native_y = 639 - ui_x */
+    const int nx1 = area->y1;
+    const int nx2 = area->y2;
+    const int ny1 = (DISP_H_RES - 1) - area->x2;
+    const int ny2 = (DISP_H_RES - 1) - area->x1;
+
+    for (int ny = ny1; ny <= ny2; ny++)
+    {
+        const int u = (DISP_H_RES - 1) - ny;
+        uint16_t *dst = shadow + (size_t)ny * EXAMPLE_LCD_H_RES;
+        for (int v = nx1; v <= nx2; v++)
+        {
+            uint16_t px = src[(size_t)v * DISP_H_RES + u];
+            dst[v] = (uint16_t)((px >> 8) | (px << 8));
+        }
+    }
+}
+
+/*
+ * Full shadow rebuild with 32-bit loads: one word covers two horizontally
+ * adjacent UI pixels, which land in two consecutive native rows. Used for large
+ * areas, where the cache-friendly rebuild beats the strided rectangle
+ * transpose.
+ */
+static void shadow_rebuild(const uint16_t *src)
 {
     const int flush_coun = (LVGL_SPIRAM_BUFF_LEN / LVGL_DMA_BUFF_LEN);
     const int rows_per_chunk = (EXAMPLE_LCD_V_RES / flush_coun);
-    const uint16_t *src = (const uint16_t *)color_p;
+
+    for (int c = 0; c < flush_coun; c++)
+    {
+        const int y0 = c * rows_per_chunk;
+        for (int v = 0; v < EXAMPLE_LCD_H_RES; v++)
+        {
+            const uint16_t *src_row = src + (size_t)v * DISP_H_RES;
+            const uint32_t *src32 = (const uint32_t *)(src_row + (EXAMPLE_LCD_V_RES - 1 - y0 - (rows_per_chunk - 1)));
+            uint16_t *dst_col = shadow + v;
+            for (int j = 0; j < rows_per_chunk / 2; j++)
+            {
+                uint32_t w = src32[j];
+                uint16_t p0 = (uint16_t)w;
+                uint16_t p1 = (uint16_t)(w >> 16);
+                dst_col[(y0 + rows_per_chunk - 1 - 2 * j) * EXAMPLE_LCD_H_RES] = (uint16_t)((p0 >> 8) | (p0 << 8));
+                dst_col[(y0 + rows_per_chunk - 2 - 2 * j) * EXAMPLE_LCD_H_RES] = (uint16_t)((p1 >> 8) | (p1 << 8));
+            }
+        }
+    }
+}
+
+/*
+ * Send the whole shadow to the panel in full-width row chunks. Two chunk
+ * buffers let the copy of chunk c overlap the DMA transfer of chunk c-1.
+ */
+static void lcd_send_shadow(esp_lcd_panel_handle_t panel_handle)
+{
+    const int flush_coun = (LVGL_SPIRAM_BUFF_LEN / LVGL_DMA_BUFF_LEN);
+    const int rows_per_chunk = (EXAMPLE_LCD_V_RES / flush_coun);
 
     for (int c = 0; c < flush_coun; c++)
     {
@@ -146,24 +232,11 @@ static void lcd_send_full_frame(esp_lcd_panel_handle_t panel_handle, uint8_t *co
             xSemaphoreTake(flush_done_semaphore, portMAX_DELAY);
         }
 
-        const int y0 = c * rows_per_chunk;
         uint16_t *chunk = trans_buf[c & 1];
-        for (int v = 0; v < EXAMPLE_LCD_H_RES; v++)
-        {
-            const uint16_t *src_row = src + (size_t)v * DISP_H_RES;
-            const uint32_t *src32 = (const uint32_t *)(src_row + (EXAMPLE_LCD_V_RES - 1 - y0 - (rows_per_chunk - 1)));
-            uint16_t *dst_col = chunk + v;
-            for (int j = 0; j < rows_per_chunk / 2; j++)
-            {
-                uint32_t w = src32[j];
-                uint16_t p0 = (uint16_t)w;
-                uint16_t p1 = (uint16_t)(w >> 16);
-                dst_col[(rows_per_chunk - 1 - 2 * j) * EXAMPLE_LCD_H_RES] = (uint16_t)((p0 >> 8) | (p0 << 8));
-                dst_col[(rows_per_chunk - 2 - 2 * j) * EXAMPLE_LCD_H_RES] = (uint16_t)((p1 >> 8) | (p1 << 8));
-            }
-        }
-
-        esp_lcd_panel_draw_bitmap(panel_handle, 0, y0, EXAMPLE_LCD_H_RES, y0 + rows_per_chunk, chunk);
+        ESP_ERROR_CHECK(esp_async_memcpy(s_mcp, chunk, shadow + (size_t)c * rows_per_chunk * EXAMPLE_LCD_H_RES,
+                                         LVGL_DMA_BUFF_LEN, mcp_done_cb, NULL));
+        xSemaphoreTake(s_mcp_done, portMAX_DELAY);
+        esp_lcd_panel_draw_bitmap(panel_handle, 0, c * rows_per_chunk, EXAMPLE_LCD_H_RES, (c + 1) * rows_per_chunk, chunk);
     }
     xSemaphoreTake(flush_done_semaphore, portMAX_DELAY);
     xSemaphoreTake(flush_done_semaphore, portMAX_DELAY);
@@ -172,46 +245,48 @@ static void lcd_send_full_frame(esp_lcd_panel_handle_t panel_handle, uint8_t *co
 static void example_lvgl_flush_cb(lv_display_t * disp, const lv_area_t * area, uint8_t * color_p)
 {
     esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t)lv_display_get_user_data(disp);
+    const uint16_t *src = (const uint16_t *)color_p;
+
+    const int area_px = (area->x2 - area->x1 + 1) * (area->y2 - area->y1 + 1);
+    if (area_px > SHADOW_REBUILD_MAX_PIXELS)
+    {
+        shadow_rebuild(src);
+    }
+    else
+    {
+        shadow_update(area, src);
+    }
 
     /*
-     * DIRECT mode can produce several invalidated areas per refresh cycle (for
-     * example the old and the new position of the touch dot). The panel only
-     * accepts complete frames, so only the last flush of the cycle sends
-     * anything: by then every rendered area is already in the buffer.
-     *
-     * Partial-rectangle updates were tried and do not work on this panel: its
-     * QSPI path requires continuous full-width row writes (the Espressif driver
-     * deliberately omits RASET there), so bounded windows are ignored and the
-     * screen freezes after the first full frame.
+     * The panel only accepts complete frames, so send the shadow once per
+     * refresh cycle on the last flush: by then every rendered area has been
+     * applied to it.
      */
-    if (!lv_display_flush_is_last(disp))
+    if (lv_display_flush_is_last(disp))
     {
-        lv_disp_flush_ready(disp);
-        return;
-    }
-
-    int64_t t_start = esp_timer_get_time();
-    if (last_flush_start)
-    {
-        int64_t period = t_start - last_flush_start;
-        prof_period += period;
-        if (period < prof_period_min)
+        int64_t t_start = esp_timer_get_time();
+        if (last_flush_start)
         {
-            prof_period_min = period;
+            int64_t period = t_start - last_flush_start;
+            prof_period += period;
+            if (period < prof_period_min)
+            {
+                prof_period_min = period;
+            }
         }
-    }
-    last_flush_start = t_start;
+        last_flush_start = t_start;
 
-    lcd_send_full_frame(panel_handle, color_p);
+        lcd_send_shadow(panel_handle);
 
-    prof_flush += esp_timer_get_time() - t_start;
-    if (++prof_frames >= 30)
-    {
-        ESP_LOGI(TAG, "frame us: period=%d min=%d flush=%d",
-                 (int)(prof_period / 30), (int)prof_period_min, (int)(prof_flush / 30));
-        prof_period = prof_flush = 0;
-        prof_period_min = INT64_MAX;
-        prof_frames = 0;
+        prof_flush += esp_timer_get_time() - t_start;
+        if (++prof_frames >= 30)
+        {
+            ESP_LOGI(TAG, "frame us: period=%d min=%d flush=%d",
+                     (int)(prof_period / 30), (int)prof_period_min, (int)(prof_flush / 30));
+            prof_period = prof_flush = 0;
+            prof_period_min = INT64_MAX;
+            prof_frames = 0;
+        }
     }
     lv_disp_flush_ready(disp);
 }
@@ -363,6 +438,11 @@ static void hello_ui_create(void)
 
 void app_main(void)
 {
+    async_memcpy_config_t mcp_cfg = ASYNC_MEMCPY_DEFAULT_CONFIG();
+    ESP_ERROR_CHECK(esp_async_memcpy_install(&mcp_cfg, &s_mcp));
+    s_mcp_done = xSemaphoreCreateBinary();
+    assert(s_mcp_done);
+
     lcd_bl_pwm_bsp_init(LCD_PWM_MODE_255);
     flush_done_semaphore = xSemaphoreCreateBinary();
     assert(flush_done_semaphore);
@@ -427,6 +507,8 @@ void app_main(void)
     assert(trans_buf[0]);
     trans_buf[1] = (uint16_t *)heap_caps_malloc(LVGL_DMA_BUFF_LEN, MALLOC_CAP_DMA);
     assert(trans_buf[1]);
+    shadow = (uint16_t *)heap_caps_malloc(BUFF_SIZE, MALLOC_CAP_SPIRAM);
+    assert(shadow);
     /*
      * DIRECT mode: LVGL renders only the invalidated areas into the
      * full-screen buffer, and the flush callback sends complete frames to the
