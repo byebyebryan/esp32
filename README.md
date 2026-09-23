@@ -48,6 +48,12 @@ vendor/      pinned upstream repos (git submodules)
 scripts/     setup.sh, env.sh, eim-config.toml
 ```
 
+## Projects
+
+- `projects/349-hello` — 640x172 landscape bring-up/demo for the
+  ESP32-S3-Touch-LCD-3.49 V2. See its README for the display pipeline and the
+  panel quirks (40MHz QSPI limit, no partial writes, no hardware rotation).
+
 ## Quickstart
 
 ```sh
