@@ -52,7 +52,7 @@ static int prof_frames = 0;
 
 #define LVGL_TICK_PERIOD_MS    5
 #define LVGL_TASK_MAX_DELAY_MS 500
-#define LVGL_TASK_MIN_DELAY_MS 10
+#define LVGL_TASK_MIN_DELAY_MS 5
 #define LVGL_TASK_STACK_SIZE   (8 * 1024)
 #define LVGL_TASK_PRIORITY     2
 
@@ -102,6 +102,19 @@ static void example_lcd_backlight_set(bool enable)
 static void example_lvgl_flush_cb(lv_display_t * disp, const lv_area_t * area, uint8_t * color_p)
 {
     esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t)lv_display_get_user_data(disp);
+
+    /*
+     * In DIRECT mode a single refresh cycle can produce several invalidated
+     * areas (for example the old and the new position of the touch dot). The
+     * panel can only accept complete frames, so only the last flush of the
+     * cycle sends anything: by then all rendered areas are already in the
+     * buffer.
+     */
+    if (!lv_display_flush_is_last(disp))
+    {
+        lv_disp_flush_ready(disp);
+        return;
+    }
 
     /*
      * LVGL renders the UI in landscape (640x172) because of the display
