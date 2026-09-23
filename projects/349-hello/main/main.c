@@ -154,13 +154,24 @@ static void example_lvgl_flush_cb(lv_display_t * disp, const lv_area_t * area, u
         const int y0 = c * rows_per_chunk;
         uint16_t *chunk = trans_buf[c & 1];
         int64_t ta = esp_timer_get_time();
+        /*
+         * 32-bit loads: one word holds two horizontally adjacent UI pixels,
+         * which land in two consecutive chunk rows. For chunk c the source
+         * range is [639-y0-63, 639-y0] and starts on an even pixel, so every
+         * load is naturally 4-byte aligned.
+         */
         for (int v = 0; v < EXAMPLE_LCD_H_RES; v++)
         {
             const uint16_t *src_row = src + (size_t)v * DISP_H_RES;
-            for (int k = 0; k < rows_per_chunk; k++)
+            const uint32_t *src32 = (const uint32_t *)(src_row + (EXAMPLE_LCD_V_RES - 1 - y0 - (rows_per_chunk - 1)));
+            uint16_t *dst_col = chunk + v;
+            for (int j = 0; j < rows_per_chunk / 2; j++)
             {
-                uint16_t px = src_row[(EXAMPLE_LCD_V_RES - 1) - (y0 + k)];
-                chunk[k * EXAMPLE_LCD_H_RES + v] = (uint16_t)((px >> 8) | (px << 8));
+                uint32_t w = src32[j];
+                uint16_t p0 = (uint16_t)w;
+                uint16_t p1 = (uint16_t)(w >> 16);
+                dst_col[(rows_per_chunk - 1 - 2 * j) * EXAMPLE_LCD_H_RES] = (uint16_t)((p0 >> 8) | (p0 << 8));
+                dst_col[(rows_per_chunk - 2 - 2 * j) * EXAMPLE_LCD_H_RES] = (uint16_t)((p1 >> 8) | (p1 << 8));
             }
         }
         prof_xpose += esp_timer_get_time() - ta;
