@@ -38,11 +38,12 @@ static const char *TAG = "349-hello";
 static SemaphoreHandle_t lvgl_mux = NULL;
 static SemaphoreHandle_t flush_done_semaphore = NULL;
 
-static uint16_t *trans_buf_1;
+static uint16_t *trans_buf[2];
 static esp_io_expander_handle_t io_expander = NULL;
 static lv_obj_t *touch_dot = NULL;
 
-static int64_t prof_xpose = 0, prof_wait = 0;
+static int64_t prof_xpose = 0, prof_flush = 0, prof_period = 0;
+static int64_t last_flush_start = 0;
 static int prof_frames = 0;
 
 #define LCD_BIT_PER_PIXEL 16
@@ -113,22 +114,33 @@ static void example_lvgl_flush_cb(lv_display_t * disp, const lv_area_t * area, u
      *     native_y = 639 - ui_x
      *
      * The source is walked row-major (contiguous reads) and written transposed
-     * into the internal DMA chunk buffer, with the byte swap applied in the
+     * into an internal DMA chunk buffer, with the byte swap applied in the
      * same pass.
+     *
+     * Two chunk buffers are used so the transpose of chunk c overlaps the DMA
+     * transfer of chunk c-1; a chunk buffer is only reused after the transfer
+     * of the chunk two positions earlier has completed.
      */
     const int flush_coun = (LVGL_SPIRAM_BUFF_LEN / LVGL_DMA_BUFF_LEN);
     const int rows_per_chunk = (EXAMPLE_LCD_V_RES / flush_coun);
     const uint16_t *src = (const uint16_t *)color_p;
 
-    xSemaphoreGive(flush_done_semaphore);
+    int64_t t_start = esp_timer_get_time();
+    if (last_flush_start)
+    {
+        prof_period += t_start - last_flush_start;
+    }
+    last_flush_start = t_start;
     for (int c = 0; c < flush_coun; c++)
     {
-        int64_t ta = esp_timer_get_time();
-        xSemaphoreTake(flush_done_semaphore, portMAX_DELAY);
-        int64_t tb = esp_timer_get_time();
+        if (c >= 2)
+        {
+            xSemaphoreTake(flush_done_semaphore, portMAX_DELAY);
+        }
 
         const int y0 = c * rows_per_chunk;
-        uint16_t *chunk = trans_buf_1;
+        uint16_t *chunk = trans_buf[c & 1];
+        int64_t ta = esp_timer_get_time();
         for (int v = 0; v < EXAMPLE_LCD_H_RES; v++)
         {
             const uint16_t *src_row = src + (size_t)v * DISP_H_RES;
@@ -138,22 +150,19 @@ static void example_lvgl_flush_cb(lv_display_t * disp, const lv_area_t * area, u
                 chunk[k * EXAMPLE_LCD_H_RES + v] = (uint16_t)((px >> 8) | (px << 8));
             }
         }
+        prof_xpose += esp_timer_get_time() - ta;
 
-        int64_t tc = esp_timer_get_time();
-        prof_xpose += tc - tb;
-        prof_wait += tb - ta;
-        esp_lcd_panel_draw_bitmap(panel_handle, 0, y0, EXAMPLE_LCD_H_RES, y0 + rows_per_chunk, trans_buf_1);
+        esp_lcd_panel_draw_bitmap(panel_handle, 0, y0, EXAMPLE_LCD_H_RES, y0 + rows_per_chunk, chunk);
     }
-    int64_t td = esp_timer_get_time();
     xSemaphoreTake(flush_done_semaphore, portMAX_DELAY);
-    prof_wait += esp_timer_get_time() - td;
+    xSemaphoreTake(flush_done_semaphore, portMAX_DELAY);
+    prof_flush += esp_timer_get_time() - t_start;
 
     if (++prof_frames >= 30)
     {
-        ESP_LOGI(TAG, "frame us: xpose=%d wait=%d total=%d",
-                 (int)(prof_xpose / 30), (int)(prof_wait / 30),
-                 (int)((prof_xpose + prof_wait) / 30));
-        prof_xpose = prof_wait = 0;
+        ESP_LOGI(TAG, "frame us: period=%d flush=%d xpose=%d",
+                 (int)(prof_period / 30), (int)(prof_flush / 30), (int)(prof_xpose / 30));
+        prof_period = prof_flush = prof_xpose = 0;
         prof_frames = 0;
     }
     lv_disp_flush_ready(disp);
@@ -299,7 +308,7 @@ void app_main(void)
     io_config.cs_gpio_num = EXAMPLE_PIN_NUM_LCD_CS;
     io_config.dc_gpio_num = -1;
     io_config.spi_mode = 3;
-    io_config.pclk_hz = 40 * 1000 * 1000;
+    io_config.pclk_hz = 80 * 1000 * 1000;
     io_config.trans_queue_depth = 10;
     io_config.on_color_trans_done = example_notify_lvgl_flush_ready;
     io_config.lcd_cmd_bits = 32;
@@ -330,14 +339,18 @@ void app_main(void)
     lv_display_set_flush_cb(disp, example_lvgl_flush_cb);
 
     uint8_t *buffer_1 = NULL;
-    uint8_t *buffer_2 = NULL;
     buffer_1 = (uint8_t *)heap_caps_malloc(BUFF_SIZE, MALLOC_CAP_SPIRAM);
     assert(buffer_1);
-    buffer_2 = (uint8_t *)heap_caps_malloc(BUFF_SIZE, MALLOC_CAP_SPIRAM);
-    assert(buffer_2);
-    trans_buf_1 = (uint16_t *)heap_caps_malloc(LVGL_DMA_BUFF_LEN, MALLOC_CAP_DMA);
-    assert(trans_buf_1);
-    lv_display_set_buffers(disp, buffer_1, buffer_2, BUFF_SIZE, LV_DISPLAY_RENDER_MODE_FULL);
+    trans_buf[0] = (uint16_t *)heap_caps_malloc(LVGL_DMA_BUFF_LEN, MALLOC_CAP_DMA);
+    assert(trans_buf[0]);
+    trans_buf[1] = (uint16_t *)heap_caps_malloc(LVGL_DMA_BUFF_LEN, MALLOC_CAP_DMA);
+    assert(trans_buf[1]);
+    /*
+     * DIRECT mode: LVGL renders only the invalidated areas into the
+     * full-screen buffer, and the flush callback sends complete frames to the
+     * panel (its QSPI path cannot do partial rows).
+     */
+    lv_display_set_buffers(disp, buffer_1, NULL, BUFF_SIZE, LV_DISPLAY_RENDER_MODE_DIRECT);
     lv_display_set_user_data(disp, panel);
     lv_display_set_rotation(disp, LV_DISPLAY_ROTATION_90);
 
