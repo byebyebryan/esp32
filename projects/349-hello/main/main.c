@@ -19,6 +19,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "freertos/idf_additions.h"
 #include "driver/spi_master.h"
 #include "esp_timer.h"
 #include "esp_lcd_panel_io.h"
@@ -43,7 +44,7 @@ static uint16_t *trans_buf[2];
 static esp_io_expander_handle_t io_expander = NULL;
 static lv_obj_t *touch_dot = NULL;
 
-static int64_t prof_xpose = 0, prof_flush = 0, prof_period = 0;
+static int64_t prof_flush = 0, prof_period = 0;
 static int64_t prof_period_min = INT64_MAX;
 static int64_t last_flush_start = 0;
 static int prof_frames = 0;
@@ -61,6 +62,37 @@ static int prof_frames = 0;
 static void example_lcd_exio_init(void);
 static void example_lcd_reset(void);
 static void example_lcd_backlight_set(bool enable);
+
+/*
+ * Idle percentage of core 0 (the core running the LVGL task), consumed by the
+ * LVGL perf monitor via LV_SYSMON_GET_IDLE (see the compile definition in
+ * CMakeLists.txt). Requires CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS with the
+ * esp_timer clock source: a 1MHz uint32 counter that wraps every ~71 minutes.
+ */
+uint32_t my_idle_percent(void)
+{
+    static uint32_t last_idle = 0;
+    static int64_t last_us = 0;
+
+    uint32_t idle = (uint32_t)ulTaskGetIdleRunTimeCounterForCore(0);
+    int64_t now = esp_timer_get_time();
+    uint32_t pct = 0;
+
+    if (last_us != 0 && now > last_us)
+    {
+        uint32_t idle_delta = idle - last_idle; /* unsigned subtraction is wrap-safe */
+        uint32_t time_delta = (uint32_t)(now - last_us);
+        if (time_delta)
+        {
+            pct = (uint32_t)(((uint64_t)idle_delta * 100) / time_delta);
+            if (pct > 100) pct = 100;
+        }
+    }
+
+    last_idle = idle;
+    last_us = now;
+    return pct;
+}
 
 static const axs15231b_lcd_init_cmd_t lcd_init_cmds[] =
 {
@@ -101,56 +133,12 @@ static void example_lcd_backlight_set(bool enable)
     ESP_ERROR_CHECK(esp_io_expander_set_level(io_expander, EXAMPLE_EXIO_PIN_BL_EN, enable ? 1 : 0));
 }
 
-static void example_lvgl_flush_cb(lv_display_t * disp, const lv_area_t * area, uint8_t * color_p)
+static void lcd_send_full_frame(esp_lcd_panel_handle_t panel_handle, uint8_t *color_p)
 {
-    esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t)lv_display_get_user_data(disp);
-
-    /*
-     * In DIRECT mode a single refresh cycle can produce several invalidated
-     * areas (for example the old and the new position of the touch dot). The
-     * panel can only accept complete frames, so only the last flush of the
-     * cycle sends anything: by then all rendered areas are already in the
-     * buffer.
-     */
-    if (!lv_display_flush_is_last(disp))
-    {
-        lv_disp_flush_ready(disp);
-        return;
-    }
-
-    /*
-     * LVGL renders the UI in landscape (640x172) because of the display
-     * rotation. The panel needs native portrait frames (172x640) written as
-     * full-width row chunks: its QSPI path sends only CASET and relies on
-     * RAMWR/RAMWRC continuation, so partial rows are not possible.
-     *
-     * Mapping from lv_display_rotate_point() for ROTATION_90:
-     *     native_x = ui_y
-     *     native_y = 639 - ui_x
-     *
-     * The source is walked row-major (contiguous reads) and written transposed
-     * into an internal DMA chunk buffer, with the byte swap applied in the
-     * same pass.
-     *
-     * Two chunk buffers are used so the transpose of chunk c overlaps the DMA
-     * transfer of chunk c-1; a chunk buffer is only reused after the transfer
-     * of the chunk two positions earlier has completed.
-     */
     const int flush_coun = (LVGL_SPIRAM_BUFF_LEN / LVGL_DMA_BUFF_LEN);
     const int rows_per_chunk = (EXAMPLE_LCD_V_RES / flush_coun);
     const uint16_t *src = (const uint16_t *)color_p;
 
-    int64_t t_start = esp_timer_get_time();
-    if (last_flush_start)
-    {
-        int64_t period = t_start - last_flush_start;
-        prof_period += period;
-        if (period < prof_period_min)
-        {
-            prof_period_min = period;
-        }
-    }
-    last_flush_start = t_start;
     for (int c = 0; c < flush_coun; c++)
     {
         if (c >= 2)
@@ -160,13 +148,6 @@ static void example_lvgl_flush_cb(lv_display_t * disp, const lv_area_t * area, u
 
         const int y0 = c * rows_per_chunk;
         uint16_t *chunk = trans_buf[c & 1];
-        int64_t ta = esp_timer_get_time();
-        /*
-         * 32-bit loads: one word holds two horizontally adjacent UI pixels,
-         * which land in two consecutive chunk rows. For chunk c the source
-         * range is [639-y0-63, 639-y0] and starts on an even pixel, so every
-         * load is naturally 4-byte aligned.
-         */
         for (int v = 0; v < EXAMPLE_LCD_H_RES; v++)
         {
             const uint16_t *src_row = src + (size_t)v * DISP_H_RES;
@@ -181,20 +162,54 @@ static void example_lvgl_flush_cb(lv_display_t * disp, const lv_area_t * area, u
                 dst_col[(rows_per_chunk - 2 - 2 * j) * EXAMPLE_LCD_H_RES] = (uint16_t)((p1 >> 8) | (p1 << 8));
             }
         }
-        prof_xpose += esp_timer_get_time() - ta;
 
         esp_lcd_panel_draw_bitmap(panel_handle, 0, y0, EXAMPLE_LCD_H_RES, y0 + rows_per_chunk, chunk);
     }
     xSemaphoreTake(flush_done_semaphore, portMAX_DELAY);
     xSemaphoreTake(flush_done_semaphore, portMAX_DELAY);
-    prof_flush += esp_timer_get_time() - t_start;
+}
 
+static void example_lvgl_flush_cb(lv_display_t * disp, const lv_area_t * area, uint8_t * color_p)
+{
+    esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t)lv_display_get_user_data(disp);
+
+    /*
+     * DIRECT mode can produce several invalidated areas per refresh cycle (for
+     * example the old and the new position of the touch dot). The panel only
+     * accepts complete frames, so only the last flush of the cycle sends
+     * anything: by then every rendered area is already in the buffer.
+     *
+     * Partial-rectangle updates were tried and do not work on this panel: its
+     * QSPI path requires continuous full-width row writes (the Espressif driver
+     * deliberately omits RASET there), so bounded windows are ignored and the
+     * screen freezes after the first full frame.
+     */
+    if (!lv_display_flush_is_last(disp))
+    {
+        lv_disp_flush_ready(disp);
+        return;
+    }
+
+    int64_t t_start = esp_timer_get_time();
+    if (last_flush_start)
+    {
+        int64_t period = t_start - last_flush_start;
+        prof_period += period;
+        if (period < prof_period_min)
+        {
+            prof_period_min = period;
+        }
+    }
+    last_flush_start = t_start;
+
+    lcd_send_full_frame(panel_handle, color_p);
+
+    prof_flush += esp_timer_get_time() - t_start;
     if (++prof_frames >= 30)
     {
-        ESP_LOGI(TAG, "frame us: period=%d min=%d flush=%d xpose=%d",
-                 (int)(prof_period / 30), (int)prof_period_min,
-                 (int)(prof_flush / 30), (int)(prof_xpose / 30));
-        prof_period = prof_flush = prof_xpose = 0;
+        ESP_LOGI(TAG, "frame us: period=%d min=%d flush=%d",
+                 (int)(prof_period / 30), (int)prof_period_min, (int)(prof_flush / 30));
+        prof_period = prof_flush = 0;
         prof_period_min = INT64_MAX;
         prof_frames = 0;
     }
