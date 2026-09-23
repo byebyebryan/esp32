@@ -65,7 +65,12 @@ static bool mcp_done_cb(async_memcpy_handle_t mcp, async_memcpy_event_t *event, 
  * cache-friendly full rebuild beyond roughly this size). */
 #define SHADOW_REBUILD_MAX_PIXELS 16384
 static esp_io_expander_handle_t io_expander = NULL;
-static lv_obj_t *touch_dot = NULL;
+
+/* Bouncing-ball demo state */
+static lv_obj_t *ball = NULL;
+static int ball_x = 0, ball_y = 0;
+static int ball_dx = 5, ball_dy = 4;
+#define BALL_SIZE 48
 
 static int64_t prof_flush = 0, prof_period = 0;
 static int64_t prof_period_min = INT64_MAX;
@@ -291,76 +296,41 @@ static void example_lvgl_flush_cb(lv_display_t * disp, const lv_area_t * area, u
     lv_disp_flush_ready(disp);
 }
 
-typedef struct {
-    bool pressed;
-    uint16_t x; /* native 172x640 space */
-    uint16_t y;
-} touch_state_t;
-
-static touch_state_t touch_state;
-static SemaphoreHandle_t touch_mux = NULL;
-
 /*
- * Reads the touch controller on its own task so the LVGL task never blocks on
- * I2C. The LVGL indev callback only copies the cached state.
+ * Bouncing-ball demo: constant-speed motion with reflections at the edges. Each
+ * 16ms tick invalidates two small rectangles (old and new position), which the
+ * shadow framebuffer turns into two small transposes.
  */
-static void touch_read_task(void *arg)
+static void ball_timer_cb(lv_timer_t *timer)
 {
-    uint8_t read_touchpad_cmd[11] = {0xb5, 0xab, 0xa5, 0x5a, 0x0, 0x0, 0x0, 0x0e,0x0, 0x0, 0x0};
-    for (;;)
+    const int w = lv_obj_get_width(lv_screen_active());
+    const int h = lv_obj_get_height(lv_screen_active());
+
+    ball_x += ball_dx;
+    ball_y += ball_dy;
+
+    if (ball_x <= 0)
     {
-        uint8_t buff[32] = {0};
-        if (i2c_master_write_read_dev(disp_touch_dev_handle, read_touchpad_cmd, 11, buff, 32) == ESP_OK)
-        {
-            uint16_t pointX = (((uint16_t)buff[2] & 0x0f) << 8) | (uint16_t)buff[3];
-            uint16_t pointY = (((uint16_t)buff[4] & 0x0f) << 8) | (uint16_t)buff[5];
-            /*
-             * The touch controller reports in 640x172 (landscape) space; map it
-             * to the display's native 172x640 space. LVGL applies the display
-             * rotation itself (lv_display_rotate_point).
-             */
-            if (pointX > EXAMPLE_LCD_V_RES) pointX = EXAMPLE_LCD_V_RES;
-            if (pointY > EXAMPLE_LCD_H_RES) pointY = EXAMPLE_LCD_H_RES;
-
-            xSemaphoreTake(touch_mux, portMAX_DELAY);
-            touch_state.pressed = (buff[1] > 0 && buff[1] < 5);
-            touch_state.x = pointY;
-            touch_state.y = (EXAMPLE_LCD_V_RES - pointX);
-            xSemaphoreGive(touch_mux);
-        }
-        vTaskDelay(pdMS_TO_TICKS(4));
+        ball_x = 0;
+        ball_dx = -ball_dx;
     }
-}
-
-static void TouchInputReadCallback(lv_indev_t * indev, lv_indev_data_t *indevData)
-{
-    touch_state_t st;
-    xSemaphoreTake(touch_mux, portMAX_DELAY);
-    st = touch_state;
-    xSemaphoreGive(touch_mux);
-
-    if (st.pressed)
+    else if (ball_x + BALL_SIZE >= w)
     {
-        indevData->point.x = st.x;
-        indevData->point.y = st.y;
-        indevData->state = LV_INDEV_STATE_PRESSED;
-
-        if (touch_dot)
-        {
-            lv_point_t p = { .x = indevData->point.x, .y = indevData->point.y };
-            lv_display_rotate_point(lv_indev_get_display(indev), &p);
-            lv_obj_clear_flag(touch_dot, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_set_pos(touch_dot, p.x - 12, p.y - 12);
-        }
+        ball_x = w - BALL_SIZE;
+        ball_dx = -ball_dx;
     }
-    else
+    if (ball_y <= 0)
     {
-        indevData->state = LV_INDEV_STATE_RELEASED;
-        if (touch_dot)
-        {
-            lv_obj_add_flag(touch_dot, LV_OBJ_FLAG_HIDDEN);
-        }
+        ball_y = 0;
+        ball_dy = -ball_dy;
     }
+    else if (ball_y + BALL_SIZE >= h)
+    {
+        ball_y = h - BALL_SIZE;
+        ball_dy = -ball_dy;
+    }
+
+    lv_obj_set_pos(ball, ball_x, ball_y);
 }
 
 static void example_increase_lvgl_tick(void *arg)
@@ -404,7 +374,7 @@ static void example_lvgl_port_task(void *arg)
     }
 }
 
-static void hello_ui_create(void)
+static void demo_ui_create(void)
 {
     lv_obj_t *scr = lv_screen_active();
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x0b1020), LV_PART_MAIN);
@@ -426,14 +396,18 @@ static void hello_ui_create(void)
     lv_obj_set_style_text_font(sub, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(sub, lv_color_hex(0x9fb3c8), 0);
 
-    touch_dot = lv_obj_create(scr);
-    lv_obj_remove_style_all(touch_dot);
-    lv_obj_set_size(touch_dot, 24, 24);
-    lv_obj_set_style_radius(touch_dot, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(touch_dot, lv_color_hex(0xff5566), 0);
-    lv_obj_set_style_bg_opa(touch_dot, LV_OPA_70, 0);
-    lv_obj_add_flag(touch_dot, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_move_foreground(touch_dot);
+    ball = lv_obj_create(scr);
+    lv_obj_remove_style_all(ball);
+    lv_obj_set_size(ball, BALL_SIZE, BALL_SIZE);
+    lv_obj_set_style_radius(ball, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(ball, lv_color_hex(0xff5566), 0);
+    lv_obj_set_style_bg_opa(ball, LV_OPA_COVER, 0);
+    ball_x = 40;
+    ball_y = 40;
+    lv_obj_set_pos(ball, ball_x, ball_y);
+    lv_obj_move_foreground(ball);
+
+    lv_timer_create(ball_timer_cb, 16, NULL);
 }
 
 void app_main(void)
@@ -446,10 +420,7 @@ void app_main(void)
     lcd_bl_pwm_bsp_init(LCD_PWM_MODE_255);
     flush_done_semaphore = xSemaphoreCreateBinary();
     assert(flush_done_semaphore);
-    touch_i2c_master_Init();
-    touch_mux = xSemaphoreCreateMutex();
-    assert(touch_mux);
-    xTaskCreatePinnedToCore(touch_read_task, "touch", 4 * 1024, NULL, 3, NULL, 1);
+    touch_i2c_master_Init(); /* also brings up I2C port 0 for the TCA9554 */
     example_lcd_exio_init();
     ESP_LOGI(TAG, "Initialize SPI bus");
 
@@ -470,7 +441,7 @@ void app_main(void)
     io_config.cs_gpio_num = EXAMPLE_PIN_NUM_LCD_CS;
     io_config.dc_gpio_num = -1;
     io_config.spi_mode = 3;
-    io_config.pclk_hz = 80 * 1000 * 1000;
+    io_config.pclk_hz = 40 * 1000 * 1000;
     io_config.trans_queue_depth = 10;
     io_config.on_color_trans_done = example_notify_lvgl_flush_ready;
     io_config.lcd_cmd_bits = 32;
@@ -518,11 +489,6 @@ void app_main(void)
     lv_display_set_user_data(disp, panel);
     lv_display_set_rotation(disp, LV_DISPLAY_ROTATION_90);
 
-    lv_indev_t *touch_indev = NULL;
-    touch_indev = lv_indev_create();
-    lv_indev_set_type(touch_indev, LV_INDEV_TYPE_POINTER);
-    lv_indev_set_read_cb(touch_indev, TouchInputReadCallback);
-
     esp_timer_create_args_t lvgl_tick_timer_args = {};
     lvgl_tick_timer_args.callback = &example_increase_lvgl_tick;
     lvgl_tick_timer_args.name = "lvgl_tick";
@@ -536,7 +502,7 @@ void app_main(void)
 
     if (example_lvgl_lock(-1))
     {
-        hello_ui_create();
+        demo_ui_create();
         example_lcd_backlight_set(true);
         example_lvgl_unlock();
     }
