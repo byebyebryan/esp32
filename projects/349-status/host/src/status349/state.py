@@ -6,6 +6,8 @@ reconnecting or rebooted device can be brought up to date in one message.
 
 from __future__ import annotations
 
+from . import proto
+
 
 class StateModel:
     def __init__(self, max_visible: int = 3) -> None:
@@ -24,7 +26,7 @@ class StateModel:
         elif overflow:
             notifs = []
 
-        return {
+        snapshot = {
             "t": "sync",
             "rev": self.rev,
             "bar": {"t": "bar", "rev": self.rev, "zones": self.zones},
@@ -33,6 +35,23 @@ class StateModel:
             "notifs": notifs,
             "notifs_overflow": overflow,
         }
+
+        # The device has one fixed 8192-byte input line. Notification strings
+        # are individually bounded, but JSON escaping can expand them, so trim
+        # the oldest cards until the actual encoded snapshot fits.
+        def fits() -> bool:
+            try:
+                proto.encode(snapshot)
+            except ValueError:
+                return False
+            return True
+
+        while snapshot["notifs"] and not fits():
+            snapshot["notifs"].pop(0)
+            snapshot["notifs_overflow"] += 1
+        if not fits():
+            raise ValueError("sync message exceeds the device line limit after notification trimming")
+        return snapshot
 
     def set_clock(self, epoch: int, offset: int) -> bool:
         if self.clock is not None and self.clock["epoch"] == int(epoch) and self.clock["offset"] == int(offset):
@@ -64,7 +83,8 @@ class StateModel:
         return True
 
     def close_notification(self, nid: int) -> bool:
-        if self.notifs.pop(int(nid), None) is None:
+        nid = int(nid)
+        if self.notifs.pop(nid, None) is None:
             return False
         self.rev += 1
         return True

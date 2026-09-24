@@ -38,6 +38,7 @@ NOTIFICATIONS_PATH = "/org/freedesktop/Notifications"
 MONITOR_RULES = [
     "interface='org.freedesktop.Notifications'",
     f"type='method_return',sender='{NOTIFICATIONS_NAME}'",
+    f"type='error',sender='{NOTIFICATIONS_NAME}'",
 ]
 
 # One message per interval keeps a notification burst from overflowing the
@@ -92,24 +93,33 @@ class NotificationSource:
         self._monitor: MessageBus | None = None
         self._control: MessageBus | None = None
         self._messages: asyncio.Queue[Message] = asyncio.Queue()
-        self._outbox: asyncio.Queue[dict] = asyncio.Queue()
+        self._outbox: dict[int, dict] = {}
+        self._outbox_ready = asyncio.Event()
         self._monitor_task: asyncio.Task | None = None
         self._process_task: asyncio.Task | None = None
         self._send_task: asyncio.Task | None = None
 
         self._next_id = 1
-        self._by_serial: dict[int, int] = {}
+        self._by_serial: dict[tuple[str, int], tuple[int, int]] = {}
         self._daemon_to_local: dict[int, int] = {}
         self._local_to_daemon: dict[int, int | None] = {}
+        self._mirrored_local_ids: set[int] = set()
 
     async def start(self) -> None:
+        await self.reconfigure()
+
+    async def reconfigure(self) -> None:
         if self.cfg.mode == "off":
+            await self._close_mirrored_notifications()
+            await self.stop()
             log.info("notifications disabled")
             return
         if self.cfg.mode != "mirror":
             log.warning("notification mode %r not implemented, staying off", self.cfg.mode)
+            await self.stop()
             return
-
+        if self._process_task is not None:
+            return
         self._process_task = asyncio.create_task(self._process_loop(), name="notifications")
         self._send_task = asyncio.create_task(self._send_loop(), name="notify-send")
         self._monitor_task = asyncio.create_task(self._monitor_loop(), name="notify-monitor")
@@ -126,6 +136,12 @@ class NotificationSource:
                     pass
         self._monitor_task = self._process_task = self._send_task = None
         await self._teardown()
+
+    async def _close_mirrored_notifications(self) -> None:
+        for local_id in tuple(self._mirrored_local_ids):
+            self._outbox.pop(local_id, None)
+            await self._on_close(local_id)
+        self._mirrored_local_ids.clear()
 
     async def dismiss(self, local_id: int) -> None:
         daemon_id = self._local_to_daemon.get(local_id)
@@ -198,6 +214,13 @@ class NotificationSource:
         self._by_serial.clear()
         self._daemon_to_local.clear()
         self._local_to_daemon.clear()
+        self._outbox.clear()
+        self._outbox_ready.clear()
+        while not self._messages.empty():
+            try:
+                self._messages.get_nowait()
+            except asyncio.QueueEmpty:
+                break
 
     def _enqueue(self, message: Message) -> bool:
         # Returning True marks the message handled: a monitor must not send
@@ -226,12 +249,27 @@ class NotificationSource:
             and message.member == "Notify"
         ):
             await self._handle_notify(message)
-        elif message.message_type == MessageType.METHOD_RETURN and message.reply_serial in self._by_serial:
-            local_id = self._by_serial.pop(message.reply_serial)
+        elif message.message_type in {MessageType.METHOD_RETURN, MessageType.ERROR}:
+            key = (message.destination, message.reply_serial) if message.destination and message.reply_serial else None
+            pending = self._by_serial.pop(key, None) if key is not None else None
+            if pending is None:
+                return
+            local_id, requested_id = pending
+            if message.message_type == MessageType.ERROR:
+                if requested_id and self._daemon_to_local.get(requested_id) == local_id:
+                    self._daemon_to_local.pop(requested_id, None)
+                if self._local_to_daemon.get(local_id) == requested_id:
+                    self._local_to_daemon[local_id] = None
+                return
             daemon_id = int(message.body[0]) if message.body and isinstance(message.body[0], int) else None
             if daemon_id is not None:
+                if requested_id and requested_id != daemon_id and self._daemon_to_local.get(requested_id) == local_id:
+                    self._daemon_to_local.pop(requested_id, None)
                 self._daemon_to_local[daemon_id] = local_id
                 self._local_to_daemon[local_id] = daemon_id
+            elif requested_id and self._daemon_to_local.get(requested_id) == local_id:
+                self._daemon_to_local.pop(requested_id, None)
+                self._local_to_daemon[local_id] = None
         elif (
             message.message_type == MessageType.SIGNAL
             and message.interface == NOTIFICATIONS_NAME
@@ -242,10 +280,20 @@ class NotificationSource:
                 daemon_id, _reason = parsed
                 local_id = self._daemon_to_local.pop(daemon_id, None)
                 if local_id is not None:
+                    self._mirrored_local_ids.discard(local_id)
+                    self._outbox.pop(local_id, None)
                     self._local_to_daemon.pop(local_id, None)
+                    for other_id, mapped_local_id in tuple(self._daemon_to_local.items()):
+                        if mapped_local_id == local_id:
+                            self._daemon_to_local.pop(other_id, None)
+                    for key, (pending_local_id, _requested_id) in tuple(self._by_serial.items()):
+                        if pending_local_id == local_id:
+                            self._by_serial.pop(key, None)
                     await self._on_close(local_id)
 
     async def _handle_notify(self, message: Message) -> None:
+        if self.cfg.mode != "mirror":
+            return
         parsed = parse_notify_body(message.body)
         if parsed is None:
             return
@@ -258,31 +306,38 @@ class NotificationSource:
         if local_id is None:
             local_id = self._next_id
             self._next_id += 1
-            self._local_to_daemon[local_id] = replaces or None
+            self._local_to_daemon[local_id] = None
             if replaces:
-                # The daemon reuses the id it was given.
+                # Keep a provisional association until Notify returns. Some
+                # notification daemons allocate a fresh ID for an unknown
+                # replaces_id, and that returned ID is authoritative.
                 self._daemon_to_local[replaces] = local_id
-        elif self._local_to_daemon.get(local_id) is None:
-            self._local_to_daemon[local_id] = replaces
+        self._mirrored_local_ids.add(local_id)
 
-        if message.serial and self._local_to_daemon.get(local_id) is None:
-            self._by_serial[message.serial] = local_id
+        if message.serial and message.sender:
+            self._by_serial[(message.sender, message.serial)] = (local_id, replaces)
 
-        await self._outbox.put(
-            proto.notify(
-                local_id,
-                parsed["app"],
-                parsed["summary"],
-                parsed["body"],
-                parsed["urgency"],
-                parsed["expire"],
-                int(time.time()),
-            )
+        # Coalesce queued replacements and let NotificationClosed cancel a
+        # card that has not reached the serial link yet.
+        self._outbox.pop(local_id, None)
+        self._outbox[local_id] = proto.notify(
+            local_id,
+            parsed["app"],
+            parsed["summary"],
+            parsed["body"],
+            parsed["urgency"],
+            parsed["expire"],
+            int(time.time()),
         )
+        self._outbox_ready.set()
 
     async def _send_loop(self) -> None:
         interval = 1.0 / NOTIFY_RATE_PER_S
         while True:
-            message = await self._outbox.get()
-            await self._on_notify(message)
-            await asyncio.sleep(interval)
+            await self._outbox_ready.wait()
+            self._outbox_ready.clear()
+            while self._outbox:
+                local_id = next(iter(self._outbox))
+                message = self._outbox.pop(local_id)
+                await self._on_notify(message)
+                await asyncio.sleep(interval)

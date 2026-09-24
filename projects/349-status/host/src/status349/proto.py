@@ -19,7 +19,10 @@ def clip_utf8(value: str, max_bytes: int) -> str:
 
 
 def encode(obj: dict) -> bytes:
-    return (PREFIX + json.dumps(obj, separators=(",", ":"), ensure_ascii=False) + "\n").encode()
+    line = (PREFIX + json.dumps(obj, separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8")
+    if len(line) > LINE_MAX:
+        raise ValueError(f"protocol line is {len(line)} bytes; device limit is {LINE_MAX}")
+    return line
 
 
 def classify(line: str) -> tuple[bool, dict | None]:

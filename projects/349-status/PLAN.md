@@ -10,12 +10,20 @@ Decisions (2026-09-23):
 - Host dependencies managed with `uv`.
 - v1 is text-only; icons/fonts come later.
 - The status area is **generic zones** composed by the host; notifications,
-  clock and media stay typed. New content never requires a firmware change.
+  clock and media stay typed. New content that fits an existing zone kind does
+  not require a firmware change.
 
 Non-goals for v1: app artwork, notification history/scrollback, `consume`
 notification mode, WiFi, audio, battery tuning, now-playing/media controls
 (M4 dropped), and bespoke per-content widgets (the status area is generic
 zones).
+
+## Current validation boundary (2026-09-24)
+
+The hardware findings below describe the 2026-09-23 builds. Subsequent review
+fixes need a fresh on-device check before they inherit those results. V1 closure
+requires a static-bar liveness check, touch and notification regression checks,
+reconnect and host sleep/resume checks, and a clean 24-hour connected soak.
 
 ## Architecture
 
@@ -24,7 +32,7 @@ PC                                          ESP32-S3 3.49 V2
 ┌────────────────────────────┐              ┌────────────────────────────┐
 │ 349d (systemd --user)      │     USB      │ 349-status                 │
 │  sources: clock, /proc,    │◄────────────►│  link task (USJ driver)    │
-│  wpctl, UPower,            │   NDJSON     │  proto (cJSON)             │
+│  wpctl, power_supply,      │   NDJSON     │  proto (cJSON)             │
 │  notifications (mirror)    │  @349 ...    │  state model               │
 │  state + rev + snapshot    │              │  LVGL UI (dirty rects)     │
 │  unix socket ← 349ctl      │              │  touch → input             │
@@ -34,12 +42,13 @@ PC                                          ESP32-S3 3.49 V2
 Device task model (M2 onward):
 
 - `link` task (prio 5): USB driver, line framing, cJSON parse, update state
-  under a mutex, set a dirty flag and wake the UI (bounded notification).
+  under a mutex, and set a dirty flag.
   Never touches LVGL.
-- `LVGL` task (prio 2, core 0): `lv_timer_handler`; drains the dirty flag and
-  applies widget updates under the LVGL lock. No unbounded per-message queue:
-  a storm sets the same flag, and an overflow marker forces a full refresh.
-- `main`: heartbeat only; stale-link check via `esp_timer` (1 Hz).
+- `LVGL` task (prio 2, core 0): `lv_timer_handler`; a 100 ms UI timer drains
+  the dirty flag and applies widget updates under the LVGL lock. No unbounded
+  device state queue: a storm sets the same flag, and an RX overflow requests
+  a fresh full sync.
+- `main`: logs a health line every 10 s. The UI timer checks link staleness.
 - All UI mutation goes through `display_349_lock()`.
 
 ## Protocol
@@ -50,6 +59,8 @@ v1 (types in parentheses):
 | dir | t | fields |
 |---|---|---|
 | d→h | `hello` | `proto` (int), `fw` (str), `cap` (str[]) |
+| h→d | `ping` | optional `ts`; daemon heartbeat every 4 s |
+| d→h | `pong` | optional `ts` echoed from `ping` |
 | h→d | `sync` | `rev` (int) + full `bar`, `clock`, `media`\|null, `notifs`[] (capped), `notifs_overflow` |
 | h→d | `bar` | `zones`[]: `{id, kind: text\|progress\|clock\|media\|spacer, w, text?, value?, format?, color?, align?}` |
 | h→d | `clock` | `epoch` (int, UTC seconds), `offset` (int, seconds east) |
@@ -62,7 +73,7 @@ v1 (types in parentheses):
 
 Zone kinds: `text` (label, optional `color`), `progress` (`value` 0..1,
 optional `text`), `clock` (rendered from `clock` + `format`, ticks locally),
-`media` (rendered from the `media` message; tap maps to transport actions),
+`media` (dormant rendering path retained after M4 was dropped),
 `spacer`. A full `bar` message replaces all zones — no deltas, no partial
 state. The host composes zones from whatever sources it wants (sysinfo, volume,
 weather, CI, ...); the device never needs to know what they mean.
@@ -81,10 +92,11 @@ Rules:
 - Layout limits: max 8 zones, each `w` clamped so the row fits (device drops
   trailing zones on overflow and distributes slack to spacers).
 - Rates: `bar` on content change (≤1 Hz), `clock` on `offset` change and hourly
-  (the RTC ticks locally), `media` 1 Hz while playing, notifications
-  event-driven; overall coalescing ≤4 msgs/s (bursts allowed).
+  (the RTC ticks locally), `ping` every 4 s, notifications event-driven and
+  rate-limited to 20/s; the dormant media path has no host source.
 - Device interpolates `media.pos` between updates.
-- Device never polls. No traffic for 10 s → "host asleep" overlay.
+- The device never polls the host for content. Lost USB SOF → "host asleep";
+  USB present with no host message for 10 s → "host disconnected".
 - A `replaces_id` notification unhides a locally hidden card.
 - `hello` is also sent by the device on boot, and in reply to a host `hello`.
 
@@ -164,7 +176,7 @@ Device: `state.c/h` (model + mutex + dirty flag, no unbounded queue), `ui.c/h`
 width clamping, UTF-8-safe ellipsis, drop-trailing-on-overflow; notification
 card area; asleep/waiting overlays), `rtc.c/h` (PCF85063 set from `clock`; the
 RTC is what carries time through the port-open resets), `proto.c` dispatch,
-`link.c` exposes `link_last_rx_us()`/`link_host_connected()`.
+`link.c` exposes `link_host_connected()`; state tracks the last host message.
 
 Host: `config.py` (TOML, defaults + zone preset), `state.py` (merge + revision
 + snapshot), `composition.py` (builds `bar` zones from sources),
@@ -301,8 +313,8 @@ returns to correct state).
 `--port` direct mode; sticky pause (flag file) frees the tty and survives
 daemon restarts; SIGHUP/`systemctl --user reload` applies a config change live;
 three consecutive service restarts each recovered (hello → sync, bar restored).
-The service is left running for the 24 h soak, which is the only acceptance
-item still open.
+The service was left running for a 24 h soak. The current validation boundary
+above supersedes this historical status; the connected soak remains open.
 
 **M5 findings:**
 

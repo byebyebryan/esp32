@@ -92,7 +92,15 @@ preset = [
 ]
 ```
 
-Reload after editing: `349ctl reload` (or `systemctl --user reload 349d`).
+`max_visible` is limited to 0–8, and the bar preset can contain at most eight
+zones. Invalid configuration is rejected rather than sent as a frame the device
+cannot accept. Reload after editing with `349ctl reload` (or
+`systemctl --user reload 349d`).
+
+The daemon sends a ping every four seconds even when the bar does not change.
+The device shows `host asleep` when USB activity stops and `host disconnected`
+when USB is active but host messages stop for ten seconds. A full sync restores
+the display after reconnection.
 
 ## Flashing while the daemon runs
 

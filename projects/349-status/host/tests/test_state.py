@@ -1,3 +1,4 @@
+from status349 import proto
 from status349.state import StateModel
 
 
@@ -46,6 +47,23 @@ def test_notifications():
     assert model.close_notification(1) is True
     assert model.close_notification(1) is False
     assert model.snapshot()["notifs"] == []
+
+
+def test_close_removes_a_card_and_a_later_new_id_can_appear():
+    model = StateModel()
+    assert model.add_notification({"t": "notify", "id": 1, "summary": "old"})
+    assert model.close_notification(1)
+    assert model.add_notification({"t": "notify", "id": 2, "summary": "new"})
+    assert [notice["id"] for notice in model.snapshot()["notifs"]] == [2]
+
+
+def test_snapshot_stays_within_device_line_limit_for_escaped_notification_text():
+    model = StateModel(max_visible=8)
+    for nid in range(8):
+        model.add_notification({"t": "notify", "id": nid, "body": "\0" * 159})
+    snapshot = model.snapshot()
+    assert len(proto.encode(snapshot)) <= proto.LINE_MAX
+    assert snapshot["notifs_overflow"] == 8 - len(snapshot["notifs"])
 
 
 def test_notifications_capped_in_sync():

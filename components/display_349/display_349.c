@@ -388,13 +388,19 @@ esp_err_t display_349_touch_init(void)
         return ESP_ERR_INVALID_STATE;
     }
 
+    /* The LVGL task is already running after display_349_init(). */
+    if (!display_349_lock(-1)) {
+        return ESP_ERR_TIMEOUT;
+    }
     lv_indev_t *indev = lv_indev_create();
     if (indev == NULL) {
+        display_349_unlock();
         return ESP_ERR_NO_MEM;
     }
     lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(indev, touch_read_cb);
     lv_indev_set_display(indev, s_disp);
+    display_349_unlock();
     return ESP_OK;
 }
 

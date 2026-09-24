@@ -1,3 +1,5 @@
+import pytest
+
 from status349 import proto
 
 
@@ -57,3 +59,8 @@ def test_notify_fits_device_buffers_without_splitting_utf8():
     assert message["summary"] == "s" * 62
     assert message["body"] == "b" * 158
     assert len(proto.encode(message)) < proto.LINE_MAX
+
+
+def test_encode_rejects_a_line_over_device_limit():
+    with pytest.raises(ValueError, match="device limit"):
+        proto.encode({"t": "text", "v": "x" * proto.LINE_MAX})

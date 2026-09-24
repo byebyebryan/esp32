@@ -7,6 +7,7 @@
 #include "display_349.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "link.h"
 #include "lvgl.h"
 #include "proto.h"
 #include "rtc.h"
@@ -28,7 +29,7 @@ static lv_obj_t *s_bar;
 static lv_obj_t *s_notif_area;
 static lv_obj_t *s_overlay;
 static lv_obj_t *s_overlay_label;
-static int s_overlay_state = -1; /* -1 unset, 0 hidden, 1 waiting, 2 asleep */
+static int s_overlay_state = -1; /* -1 unset, 0 hidden, 1 waiting, 2 asleep, 3 link stale */
 
 static lv_obj_t *s_clock_label;
 static char s_clock_format[STATUS_ZONE_FORMAT_MAX];
@@ -191,14 +192,21 @@ static void ui_build_bar(void)
     s_clock_format[0] = '\0';
 
     /* Drop trailing zones that would overflow the row. */
+    const int available = DISPLAY_349_H_RES - 16; /* 8 px padding at each edge */
     int total = 0;
     int fit = 0;
     for (; fit < count; fit++) {
-        const int w = zones[fit].w > 0 ? zones[fit].w : (strcmp(zones[fit].kind, "spacer") == 0 ? 0 : 60);
-        if (fit > 0 && total + w > DISPLAY_349_H_RES) {
+        const bool spacer = strcmp(zones[fit].kind, "spacer") == 0;
+        int w = zones[fit].w > 0 ? zones[fit].w : (spacer ? 0 : 60);
+        if (w > available) {
+            w = available;
+        }
+        const int gap = fit > 0 ? 8 : 0;
+        if (total + gap + w > available) {
             break;
         }
-        total += w;
+        zones[fit].w = w;
+        total += gap + w;
     }
 
     for (int i = 0; i < fit; i++) {
@@ -358,9 +366,12 @@ static void ui_update_overlay(void)
     if (!got_sync) {
         wanted = 1;
         text = "waiting for host";
-    } else if (last_rx == 0 || esp_timer_get_time() - last_rx > STATUS_STALE_TIMEOUT_US) {
+    } else if (!link_host_connected()) {
         wanted = 2;
         text = "host asleep";
+    } else if (last_rx == 0 || esp_timer_get_time() - last_rx > STATUS_STALE_TIMEOUT_US) {
+        wanted = 3;
+        text = "host disconnected";
     }
 
     if (wanted == s_overlay_state) {

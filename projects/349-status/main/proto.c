@@ -113,13 +113,14 @@ void proto_handle_line(const char *json)
         handle_text(cJSON_GetObjectItemCaseSensitive(obj, "v"));
     } else if (strcmp(kind, "ping") == 0) {
         handle_ping(cJSON_GetObjectItemCaseSensitive(obj, "ts"));
+        state_note_rx();
     } else if (strcmp(kind, "sync") == 0) {
         const cJSON *clock = cJSON_GetObjectItemCaseSensitive(obj, "clock");
         if (cJSON_IsObject(clock)) {
             handle_clock(clock);
         }
-        state_apply_sync(obj);
         state_note_rx();
+        state_apply_sync(obj);
     } else if (strcmp(kind, "bar") == 0) {
         state_apply_bar(obj);
         state_note_rx();

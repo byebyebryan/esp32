@@ -19,7 +19,7 @@ import serial_asyncio
 
 from . import proto
 from .composition import build_zones
-from .config import Config, apply_config, load_config
+from .config import Config, apply_config, load_config, validate_config
 from .ipc import IpcServer, pause_path
 from .link import LinkError, find_port, reset_to_normal_boot_async
 from .sources.clock import ClockSource
@@ -32,12 +32,14 @@ from .state import StateModel
 log = logging.getLogger("349d")
 
 BAUDRATE = 115200
+PING_INTERVAL_S = 4.0
 
 
 class Daemon:
     def __init__(
         self, cfg: Config, stop: asyncio.Event, cfg_path: str | None = None, port_override: str | None = None
     ):
+        validate_config(cfg)
         self.cfg = cfg
         self.cfg_path = cfg_path
         self._port_override = port_override
@@ -54,6 +56,7 @@ class Daemon:
         self._devlog: deque[str] = deque(maxlen=200)
         self._last_rx_mono: float | None = None
         self._needs_sync = False
+        self._config_changed = asyncio.Event()
         self._next_notify_id = 100000
         self._ipc = IpcServer(self._ipc_handler)
 
@@ -62,6 +65,7 @@ class Daemon:
         await self._ipc.start()
         link = asyncio.create_task(self._link_loop(), name="link")
         tick = asyncio.create_task(self._tick_loop(), name="tick")
+        ping = asyncio.create_task(self._ping_loop(), name="ping")
         try:
             await self.stop.wait()
         finally:
@@ -69,23 +73,31 @@ class Daemon:
                 self._writer.close()
             link.cancel()
             tick.cancel()
-            await asyncio.gather(link, tick, return_exceptions=True)
+            ping.cancel()
+            await asyncio.gather(link, tick, ping, return_exceptions=True)
             await self.notifications.stop()
             await self._ipc.stop()
 
     async def _device_notify(self, message: dict) -> None:
         self.model.add_notification(message)
+        # A live replacement must reach the device even when the payload is
+        # unchanged: it unhides a card that was dismissed locally.
         await self.send(message)
 
     async def _device_close(self, local_id: int) -> None:
-        self.model.close_notification(local_id)
-        await self.send(proto.close(local_id))
+        if self.model.close_notification(local_id):
+            await self.send(proto.close(local_id))
 
     async def send(self, message: dict) -> bool:
         if self._writer is None:
             return False
         try:
-            self._writer.write(proto.encode(message))
+            payload = proto.encode(message)
+        except ValueError as exc:
+            log.error("refusing invalid protocol message: %s", exc)
+            return False
+        try:
+            self._writer.write(payload)
             await self._writer.drain()
             return True
         except (ConnectionError, OSError) as exc:
@@ -146,6 +158,7 @@ class Daemon:
             if serial_port is not None:
                 await reset_to_normal_boot_async(serial_port)
             await self.send(proto.hello())
+            await self.send({"t": "ping", "ts": int(time.time())})
 
             try:
                 await self._read_loop(reader)
@@ -216,21 +229,24 @@ class Daemon:
         else:
             log.info("device input: %s", message)
 
-    def reload(self) -> None:
+    async def reload(self) -> bool:
         if self.cfg_path is None:
             log.info("no config file to reload")
-            return
+            return False
         try:
             new = load_config(self.cfg_path)
         except Exception as exc:  # noqa: BLE001 - a bad file must not kill the daemon
             log.error("config reload failed: %s", exc)
-            return
+            return False
         apply_config(self.cfg, new)
         if self._port_override is not None:
             self.cfg.link.port = self._port_override
         self.model.max_visible = self.cfg.notifications.max_visible
         self._needs_sync = True
+        self._config_changed.set()
+        await self.notifications.reconfigure()
         log.info("config reloaded from %s", self.cfg_path)
+        return True
 
     def pause(self) -> None:
         pause_path().touch()
@@ -286,21 +302,40 @@ class Daemon:
             self.resume()
             return {"ok": True}
         if cmd == "reload":
-            self.reload()
-            return {"ok": True}
+            return {"ok": await self.reload()}
         if cmd == "log":
             count = max(1, min(200, int(request.get("lines", 50))))
             return {"ok": True, "lines": list(self._devlog)[-count:]}
         return {"ok": False, "error": f"unknown command {cmd!r}"}
 
     async def _tick_loop(self) -> None:
-        tick = max(0.05, float(self.cfg.daemon.tick_s))
-        sync_interval = max(tick, float(self.cfg.daemon.sync_interval_s))
         last_offset: int | None = None
-        next_sync = time.monotonic() + sync_interval
+        interval_settings: tuple[float, float] | None = None
+        next_sync = time.monotonic()
 
         while True:
-            await asyncio.sleep(tick)
+            tick = float(self.cfg.daemon.tick_s)
+            sync_interval = float(self.cfg.daemon.sync_interval_s)
+            settings = (tick, sync_interval)
+            if settings != interval_settings:
+                next_sync = time.monotonic() + sync_interval
+                interval_settings = settings
+
+            try:
+                await asyncio.wait_for(self._config_changed.wait(), timeout=tick)
+            except asyncio.TimeoutError:
+                pass
+            else:
+                self._config_changed.clear()
+
+            # A reload may have changed both intervals while this wait was
+            # active. Reset the sync deadline before processing this tick.
+            tick = float(self.cfg.daemon.tick_s)
+            sync_interval = float(self.cfg.daemon.sync_interval_s)
+            settings = (tick, sync_interval)
+            if settings != interval_settings:
+                next_sync = time.monotonic() + sync_interval
+                interval_settings = settings
 
             if self._needs_sync:
                 self._needs_sync = False
@@ -319,7 +354,13 @@ class Daemon:
 
             if time.monotonic() >= next_sync:
                 await self._send_sync()
-                next_sync = time.monotonic() + sync_interval
+                next_sync = time.monotonic() + float(self.cfg.daemon.sync_interval_s)
+
+    async def _ping_loop(self) -> None:
+        while True:
+            await asyncio.sleep(PING_INTERVAL_S)
+            if self._writer is not None:
+                await self.send({"t": "ping", "ts": int(time.time())})
 
 
 async def _run(cfg: Config, stop: asyncio.Event, cfg_path: str | None = None, port_override: str | None = None) -> None:
@@ -331,7 +372,7 @@ async def _run(cfg: Config, stop: asyncio.Event, cfg_path: str | None = None, po
         except NotImplementedError:  # pragma: no cover - non-POSIX
             pass
     try:
-        loop.add_signal_handler(signal.SIGHUP, daemon.reload)
+        loop.add_signal_handler(signal.SIGHUP, lambda: asyncio.create_task(daemon.reload()))
     except (NotImplementedError, AttributeError):  # pragma: no cover
         pass
     await daemon.run()
@@ -356,7 +397,10 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     cfg_path = args.config or default_config_path()
-    cfg = load_config(cfg_path)
+    try:
+        cfg = load_config(cfg_path)
+    except (OSError, ValueError) as exc:
+        parser.error(f"invalid configuration: {exc}")
 
     stop = asyncio.Event()
     try:

@@ -1,6 +1,7 @@
 import pytest
 
 from status349.config import default_config, load_config
+from status349.daemon import main
 
 
 def test_defaults():
@@ -43,3 +44,30 @@ def test_unknown_key_rejected(tmp_path):
     path.write_text("[daemon]\nnope = 1\n")
     with pytest.raises(ValueError):
         load_config(str(path))
+
+
+@pytest.mark.parametrize(
+    "config_text, message",
+    [
+        ("[notifications]\nmax_visible = 9\n", "max_visible"),
+        ("[bar]\npreset = [" + ",".join("{ id = 'z%d', kind = 'text', w = 1 }" % i for i in range(9)) + "]\n", "zones"),
+        ("[bar]\npreset = [{ id = 'wide', kind = 'text', w = 641 }]\n", "w must"),
+        ("[bar]\npreset = [{ id = 'long', kind = 'text', w = 20, text = '" + "x" * 96 + "' }]\n", "text"),
+        ("[daemon]\ntick_s = 0.2\nsync_interval_s = 0.1\n", "at least"),
+        ("[notifications]\nmode = 'consume'\n", "mode"),
+    ],
+)
+def test_protocol_limits_rejected(tmp_path, config_text, message):
+    path = tmp_path / "349d.toml"
+    path.write_text(config_text)
+    with pytest.raises(ValueError, match=message):
+        load_config(str(path))
+
+
+def test_invalid_startup_config_has_a_clear_cli_error(tmp_path, capsys):
+    path = tmp_path / "349d.toml"
+    path.write_text("[notifications]\nmax_visible = 9\n")
+    with pytest.raises(SystemExit) as error:
+        main(["--config", str(path)])
+    assert error.value.code == 2
+    assert "invalid configuration" in capsys.readouterr().err
