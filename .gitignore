@@ -9,6 +9,11 @@ sdkconfig.old
 .vscode/
 compile_commands.json
 
+# Python (host tools)
+.venv/
+__pycache__/
+.pytest_cache/
+
 # OS noise
 .DS_Store
 

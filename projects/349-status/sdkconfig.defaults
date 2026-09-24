@@ -1,4 +1,4 @@
-# Minimal hello-world display test for the ESP32-S3-Touch-LCD-3.49 V2
+# 349-status M0: USB-Serial-JTAG link bring-up (display arrives in M1)
 CONFIG_IDF_TARGET="esp32s3"
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
@@ -8,15 +8,18 @@ CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_FREERTOS_HZ=1000
-CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
-CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y
+# Logs and framed data share the USB-Serial-JTAG port; the link driver takes it
+# over and usb_serial_jtag_vfs_use_driver() keeps console output working.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+# LVGL (via components/display_349)
 CONFIG_LV_OS_FREERTOS=y
 CONFIG_LV_DEF_REFR_PERIOD=8
 CONFIG_LV_ATTRIBUTE_FAST_MEM_USE_IRAM=y
+CONFIG_LV_FONT_MONTSERRAT_12=y
+CONFIG_LV_FONT_MONTSERRAT_14=y
 CONFIG_LV_FONT_MONTSERRAT_16=y
 CONFIG_LV_FONT_MONTSERRAT_28=y
 CONFIG_LV_TXT_BREAK_CHARS=" ,.;:-_"
-CONFIG_LV_USE_SYSMON=y
-CONFIG_LV_USE_PERF_MONITOR=y
-# display_349 logs frame timing at debug level; raise the compile-time ceiling.
+# Touch debug + frame profiling from display_349 log at debug level.
 CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y

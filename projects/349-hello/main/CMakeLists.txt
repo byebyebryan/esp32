@@ -1,5 +1,6 @@
 idf_component_register(
     SRCS "main.c"
+    REQUIRES lvgl display_349
     INCLUDE_DIRS ".")
 
 # Point LVGL's perf monitor at our own idle reader. Its default

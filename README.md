@@ -53,6 +53,9 @@ scripts/     setup.sh, env.sh, eim-config.toml
 - `projects/349-hello` — 640x172 landscape bring-up/demo for the
   ESP32-S3-Touch-LCD-3.49 V2. See its README for the display pipeline and the
   panel quirks (40MHz QSPI limit, no partial writes, no hardware rotation).
+- `projects/349-status` — USB-connected desk status display for the same board,
+  with a host daemon, notification mirroring, and touch actions. See its README
+  for setup and operation.
 
 ## Quickstart
 
