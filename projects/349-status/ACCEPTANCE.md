@@ -4,8 +4,8 @@
 
 This run checks the reviewed v1 fixes on the physical ESP32-S3 3.49 V2.
 The results below are observations from this run, not inherited from the
-2026-09-23 prototype checks in [PLAN.md](PLAN.md). V1 remains open until the
-suspend/resume gate and a fresh 24-hour connected soak pass.
+2026-09-23 prototype checks in [PLAN.md](PLAN.md). V1 remains open until a
+fresh 24-hour connected soak passes.
 
 ### Build and environment
 
@@ -41,17 +41,22 @@ observations follow.
 
 After a full USB power loss during replug, the RTC reported `oscillator
 stopped` at boot and was set from the host during sync. Subsequent warm
-service restarts reported `PCF85063 ok`. This does not establish clock
-continuity during host suspend; that still needs the powered-board check.
+service restarts reported `PCF85063 ok`. This installation now assumes that
+host sleep also removes USB power. A powered-off board cannot show a host
+asleep overlay or keep a visible clock running; the replug result exercises
+the corresponding cold-start recovery path.
 
 ### Open gates
 
-- Host suspend: verify an asleep overlay within 10 s, advancing RTC clock
-  while the board remains powered, and restored normal state within 3 s of
-  resume. The user could not suspend the host during this session.
 - Fresh 24-hour connected soak after the short gates: record service and
   device identity, unexpected resets, link errors, stale cards, and false
   overlays. No clean 24-hour result has been claimed.
+
+Actual host suspend/wake was not exercised. The assumption that USB power is
+removed during sleep has not been measured on this host, and the manual
+replug timing cannot prove host-specific wake timing. If this host retains USB
+power during sleep, the powered-board overlay, RTC, and resume behavior need
+a separate test before making claims about them.
 
 ### Soak recorder readiness
 
@@ -67,8 +72,8 @@ toward the 24-hour window.
 The recorder also samples at the deadline; a six-second check with a two-second
 interval recorded samples at 2, 4, and 6 seconds before reporting success.
 
-After suspend/resume passes, launch a fresh run with a unique UTC run ID in
-both the unit and output names:
+Launch a fresh connected run with a unique UTC run ID in both the unit and
+output names:
 
 ```sh
 rtk systemd-run --user --unit=349-status-soak-RUN_ID \

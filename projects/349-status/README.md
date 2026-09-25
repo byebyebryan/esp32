@@ -110,9 +110,10 @@ seconds by default; desktop notifications remain owned by the desktop
 notification daemon.
 
 The daemon sends a ping every four seconds even when the bar does not change.
-The device shows `host asleep` when USB activity stops and `host disconnected`
-when USB is active but host messages stop for ten seconds. A full sync restores
-the display after reconnection.
+While the board stays powered, it shows `host asleep` when USB activity stops
+and `host disconnected` when USB is active but host messages stop for ten
+seconds. If the host cuts USB power during sleep, the board turns off instead;
+a full sync restores the display when it powers up and reconnects.
 
 ## Flashing while the daemon runs
 

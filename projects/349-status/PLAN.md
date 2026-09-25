@@ -32,7 +32,7 @@ that were exercised.
 |---|---|
 | M0–M3, M5 implementation | Present in source; fresh short-gate results are in `ACCEPTANCE.md` |
 | M4 media | Dropped from v1; protocol/rendering hooks remain dormant |
-| V1 acceptance | Static-bar, touch/notification, and replug checks passed; suspend/resume and a clean 24-hour connected soak remain open |
+| V1 acceptance | Static-bar, touch/notification, and replug checks passed; a clean 24-hour connected soak remains open. This installation assumes USB power is removed during host sleep; actual host suspend/wake is unverified. |
 
 The acceptance run must record which host process and device firmware build
 were used. The device `hello.build` and `hello.build_sha` report its app
@@ -49,7 +49,10 @@ descriptor version and an ELF hash prefix; a running service or the
    injected-card expiry, bar fit, and representative CJK text and missing
    glyph placeholders.
 3. Measure replug discovery and full-state recovery against the M2 targets
-   below; check host sleep/resume, RTC continuity, and device CPU headroom.
+   below, and device CPU headroom. For this installation, assume host sleep
+   removes USB power: the board cannot show an asleep overlay or keep its clock
+   visible while off. Record actual host suspend/wake as an untested host
+   behavior rather than using a powered-board sleep gate.
 4. After the short gates pass, run a fresh 24-hour connected soak. Record
    unexpected resets, link errors, stale cards, and false overlays. A failed
    gate is repaired and repeated before declaring v1 closed.
@@ -128,8 +131,9 @@ Rules:
   4 s, notifications event-driven and
   rate-limited to 20/s; the dormant media path has no host source.
 - Device interpolates `media.pos` between updates.
-- The device never polls the host for content. Lost USB SOF → "host asleep";
-  USB present with no host message for 10 s → "host disconnected".
+- The device never polls the host for content. While the board stays powered,
+  lost USB SOF → "host asleep"; USB present with no host message for 10 s →
+  "host disconnected". If USB power is removed, the board is off instead.
 - A `replaces_id` notification unhides a locally hidden card.
 - `hello` is also sent by the device on boot, and in reply to a host `hello`.
 
@@ -241,10 +245,12 @@ zone added purely in host config (`M2 OK`) appeared without reflashing.
    (otherwise host-side labels were replaced by `--`).
 
 *Accept next:* missing-port discovery checks every 0.5 s; replug → correct
-state within 3 s; host suspend → asleep ≤10 s; resume → recover ≤3 s;
-device CPU headroom measured with the perf overlay;
-clock survives host sleep via RTC; a new zone added purely in host config shows
-up without reflashing; host can run against `fake.py`.
+state within 3 s; device CPU headroom measured with the alive log;
+a new zone added purely in host config shows up without reflashing; host can
+run against `fake.py`. A powered-board sleep target (asleep ≤10 s, RTC clock
+continuity, recovery ≤3 s) applies only when USB power is retained. Under
+the power-off-on-sleep assumption, wake follows the cold replug path; actual
+host suspend/wake timing remains unverified.
 
 ### M3 — Notifications mirror (M)
 
@@ -343,10 +349,11 @@ tty mid-flash; `resume` clears it (and costs one device reset, M0 finding 1).
 `graphical-session.target`), and `DBUS_SESSION_BUS_ADDRESS` must be present in
 the user manager environment.
 
-*Accept:* `systemctl --user enable --now 349d`; survives suspend/resume and
-replug; `349ctl pause` frees the tty for `idf.py flash` even across daemon
+*Accept:* `systemctl --user enable --now 349d`; survives replug and daemon
+restarts; `349ctl pause` frees the tty for `idf.py flash` even across daemon
 restarts; 24 h soak clean; crash-loop test (daemon restarts repeatedly, device
-returns to correct state).
+returns to correct state). Actual host suspend/wake is a separate host
+integration limit under the power-off-on-sleep assumption.
 
 **Done on hardware (2026-09-23):** `349d.service` installed and enabled;
 `349ctl status|text|notify|pause|resume|reload|log` over the Unix socket plus
@@ -384,8 +391,9 @@ above supersedes this historical status; the connected soak remains open.
   interleaving, writes go through the driver's TX mutex.
 - The daemon holding the tty blocks `idf.py flash`; sticky `349ctl pause` (M5)
   is the answer, not `systemctl stop`.
-- Host sleep stops SOF packets, so `usb_serial_jtag_is_connected()` is the
-  primary asleep detector; read timeout is the fallback.
+- If host sleep retains USB power, stopped SOF packets make
+  `usb_serial_jtag_is_connected()` the primary asleep detector; read timeout
+  is the fallback. If USB power is removed, the device turns off.
 - Notification storms and text-heavy LVGL layouts: rate-limit, cap visible
   cards, measure CPU in M2.
 - Host-composed zones can overflow or look bad; the device clamps widths, drops
