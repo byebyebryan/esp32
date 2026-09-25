@@ -105,9 +105,14 @@ Invalid configuration is rejected rather than silently dropping zones or
 sending a frame the device cannot accept. Reload after editing with
 `349ctl reload` (or `systemctl --user reload 349d`).
 
-V1 uses Montserrat with a bundled Source Han Sans CJK fallback for bar and
-notification text. Latin accents become base letters; glyphs outside the font
-set show a visible placeholder.
+V1 uses Montserrat with a bundled Source Han Sans CJK fallback and a generated
+punctuation/symbol subset for bar and notification text. The subset covers
+typographic quotes (including `’`), arrows, math signs, shapes, and dingbats;
+see [font sources and licenses](main/fonts/README.md). Latin accents become
+base letters, while nondecomposing Latin-1 and Latin Extended-A letters have
+glyphs. Glyphs outside the font set show a visible placeholder. The
+[coverage audit](PLAN.md) describes remaining script gaps. Nerd Font Private
+Use icons and color emoji are not included.
 
 `349ctl notify` cards expire after about five seconds by default. Mirrored
 cards follow a positive app timeout; for the server-default timeout (`-1`),

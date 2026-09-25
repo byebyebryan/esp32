@@ -71,6 +71,49 @@ closed for cleanup. The service remained linked with no warning or error in
 its journal. This is a headless count/protocol check; a separate visual claim
 about the physical display is not made here.
 
+### Symbol fallback follow-up — 2026-09-24 PDT
+
+The user reported that a curly apostrophe in a real notification appeared as
+a box. An isolated card confirmed the distinction: ASCII `we've` rendered in
+the title, while `we’ve` (U+2019) showed a box in the body. The host preserved
+both characters; the firmware's Montserrat/CJK fonts lacked U+2019.
+
+Generated 14/16 px LVGL symbol subsets now follow Montserrat and Source Han
+Sans in the fallback chain. The first build (`build_sha=679281b56`) was
+flashed and visually checked. Its two font objects used 56,476 and 70,300
+bytes of text data, with no static writable data. Post-flash alive samples
+showed 92–94% core 0 idle and 99–100% core 1 idle during this observation
+window.
+
+On that first build, the user confirmed that both apostrophe forms rendered in both card
+text sizes, together with `東京`, an em dash, an arrow, and a check mark. The
+unsupported `🛸` still appeared as a box. The host service remained linked.
+The 90-second injected test card then expired, returning the host to
+`notifs: 0` with the link still active.
+
+A subsequent static audit found missing `×`, `÷`, and several European letters
+that the host does not transliterate. Extending the generated font to Latin-1
+and Latin Extended-A raised the repertoire to 2,602 code points at each size;
+`tools/check_font_coverage.py` passes its two-size coverage gate. The build
+flashed for this audit was `build=cf56cea-dirty`, `build_sha=844085c67`,
+matching ELF SHA-256
+`844085c67c4db83a018231b127dee362495e76e668ccd8425f2a9f5476923efa`.
+The app image is `0x1329f0` bytes in an `0x800000`-byte partition, with 85%
+free. The two current font objects use 68,089 and 84,573 bytes of text data
+and no static writable data. The host linked after the second flash. A
+60-second card exercised `×`, `÷`, `ø`, `ß`, `ł`, and `œ`; it expired and the
+host returned to `notifs: 0`. The user missed that card, so it was resent for
+two minutes. On the second card, the user visually confirmed all six glyphs
+and `東京`. Alive samples on the current build showed 93–94% core 0 idle and
+99–100% core 1 idle. This remains a targeted check, not certification of
+every glyph or script. The firmware image predates the commit of its source.
+
+A read-only audit of the desktop shell's retained history examined only code
+points after the host's normalization and byte limits; it did not print or
+retain message contents. Its 33 non-test `ghostty` entries used 72 distinct
+code points, all covered by the current font. No Chrome, Google Calendar, or
+Slack entries were retained in that sample, so their coverage is unmeasured.
+
 ### Deferred checks and limits
 
 - The 24-hour connected soak was stopped at the user's request because its

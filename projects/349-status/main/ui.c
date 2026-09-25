@@ -17,6 +17,9 @@
 #error "349-status requires the Source Han 14/16 CJK fonts; enable them in sdkconfig"
 #endif
 
+LV_FONT_DECLARE(status_symbol_14);
+LV_FONT_DECLARE(status_symbol_16);
+
 #define BAR_HEIGHT 46
 #define ZONE_FONT  (&s_zone_font)
 #define BODY_FONT  (&s_body_font)
@@ -45,19 +48,24 @@ static int s_last_second = -1;
 static lv_font_t s_zone_font;
 static lv_font_t s_body_font;
 static lv_font_t s_small_font;
+static lv_font_t s_cjk_font_14;
+static lv_font_t s_cjk_font_16;
 
 static void ui_init_fonts(void)
 {
-    /* Keep Montserrat for the common glyphs and use the bundled Source Han
-     * subset for CJK text in bars and cards. Unknown glyphs use LVGL's
-     * visible placeholder. Copy the descriptors rather than mutating LVGL's
-     * shared const fonts. */
+    /* Prefer Montserrat and the bundled CJK subset, then our punctuation and
+     * symbol subset. Copy descriptors rather than mutating LVGL's shared
+     * const fonts. Unknown glyphs still use LVGL's visible placeholder. */
+    s_cjk_font_16 = lv_font_source_han_sans_sc_16_cjk;
+    s_cjk_font_16.fallback = &status_symbol_16;
+    s_cjk_font_14 = lv_font_source_han_sans_sc_14_cjk;
+    s_cjk_font_14.fallback = &status_symbol_14;
     s_zone_font = lv_font_montserrat_16;
-    s_zone_font.fallback = &lv_font_source_han_sans_sc_16_cjk;
+    s_zone_font.fallback = &s_cjk_font_16;
     s_body_font = lv_font_montserrat_14;
-    s_body_font.fallback = &lv_font_source_han_sans_sc_14_cjk;
+    s_body_font.fallback = &s_cjk_font_14;
     s_small_font = lv_font_montserrat_12;
-    s_small_font.fallback = &lv_font_source_han_sans_sc_14_cjk;
+    s_small_font.fallback = &s_cjk_font_14;
 }
 
 static lv_text_align_t text_align(const char *align)

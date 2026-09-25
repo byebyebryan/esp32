@@ -9,8 +9,9 @@ Decisions (2026-09-23):
 - Extract the 349-hello display pipeline into `components/display_349` (M1).
 - Host dependencies managed with `uv`.
 - v1 is text-only. Montserrat remains the primary font, with the bundled
-  Source Han Sans 14/16 px CJK subset as a fallback. Latin accents are reduced
-  to base letters; unsupported glyphs use LVGL's visible placeholder.
+  Source Han Sans 14/16 px CJK subset and a generated punctuation/symbol
+  subset as fallbacks. Latin accents are reduced to base letters; unsupported
+  glyphs use LVGL's visible placeholder.
 - The status area is **generic zones** composed by the host; notifications,
   clock and media stay typed. New content that fits an existing zone kind does
   not require a firmware change.
@@ -204,10 +205,38 @@ a transitive include path that the version change broke).
 ### M2 — Status UI + sources (M)
 
 The default zone preset is host-side config. V1 keeps Montserrat for common
-glyphs and falls back to LVGL's bundled Source Han Sans 14/16 px CJK subset in
-bar and notification text. Latin accents become base letters; glyphs outside
-the bundled font coverage show LVGL's placeholder. On-device acceptance must
-check representative text and the CPU/flash cost of the fallback.
+glyphs and falls back to LVGL's bundled Source Han Sans 14/16 px CJK subset,
+then a generated 14/16 px punctuation and symbol subset in bar and notification
+text. Latin accents become base letters; glyphs outside those fonts show LVGL's
+placeholder. The symbol subset includes typographic quotes, arrows, math signs,
+shapes, and dingbats. Nerd Font Private Use icons and color emoji remain outside
+the v1 text repertoire. On-device acceptance checks representative text and
+the CPU/flash cost of the fallback.
+
+**Text coverage audit (2026-09-24):** The generated repertoire has 2,602
+distinct code points at each card text size. It covers all printable ASCII,
+Latin-1 and Latin Extended-A, plus the selected punctuation/symbol smoke set
+in `tools/check_font_coverage.py`. The host still reduces most decomposable
+Latin accents to base letters. The bundled CJK subset contains 1,118 Han
+characters and 77 Hiragana/73 Katakana; this is useful for short examples but
+does not cover general Chinese or Japanese text. A small Chinese sample missed
+`测`, `试`, and `败`. Greek, Cyrillic, Hangul, and supplementary emoji have no
+glyphs in the current repertoire. Arabic/Indic text would also need shaping,
+not just more glyphs. The 2,602 count measures stored code points, not the
+fraction of natural-language text that will render.
+
+For the intended mostly English workload, a read-only check of 33 retained
+`ghostty` notification-history entries found 72 distinct code points after
+applying the host's text normalization and byte limits; all were in the font.
+That history had no retained Chrome, Calendar, or Slack entries, so it does not
+establish coverage for those sources. No notification text was recorded in
+the audit output.
+The user identified Codex CLI, Claude Code, OpenCode, and Chrome notifications
+from Google Calendar and Slack as the main sources. Their messages are
+overwhelmingly English; Simplified Chinese is a secondary preference, not a
+v1 gate. Any further font expansion should follow missing characters observed
+in those sources, with a separate coverage decision for broader Chinese text
+or emoji.
 
 Device: `state.c/h` (model + mutex + dirty flag, no unbounded queue), `ui.c/h`
 (generic zone renderer: flex row, kinds `text|progress|clock|media|spacer`,
