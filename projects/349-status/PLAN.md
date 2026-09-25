@@ -32,7 +32,7 @@ that were exercised.
 |---|---|
 | M0–M3, M5 implementation | Present in source; fresh short-gate results are in `ACCEPTANCE.md` |
 | M4 media | Dropped from v1; protocol/rendering hooks remain dormant |
-| V1 acceptance | Static-bar, touch/notification, and replug checks passed; a clean 24-hour connected soak remains open. This installation assumes USB power is removed during host sleep; actual host suspend/wake is unverified. |
+| V1 acceptance | Static-bar, touch/notification, and replug checks passed; a 24-hour connected soak is running from 2026-09-25 05:10:31 UTC. This installation assumes USB power is removed during host sleep; actual host suspend/wake is unverified. |
 
 The acceptance run must record which host process and device firmware build
 were used. The device `hello.build` and `hello.build_sha` report its app

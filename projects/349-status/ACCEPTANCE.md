@@ -50,7 +50,7 @@ the corresponding cold-start recovery path.
 
 - Fresh 24-hour connected soak after the short gates: record service and
   device identity, unexpected resets, link errors, stale cards, and false
-  overlays. No clean 24-hour result has been claimed.
+  overlays. The run below has started; no clean 24-hour result has been claimed.
 
 Actual host suspend/wake was not exercised. The assumption that USB power is
 removed during sleep has not been measured on this host, and the manual
@@ -88,5 +88,17 @@ rtk systemd-run --user --unit=349-status-soak-RUN_ID \
 
 The recorder cannot see pixels. The board still needs a human visual check
 at the soak start and end for stale cards or false overlays.
+
+### Connected soak started
+
+The user confirmed a normal bar with no stale card or false overlay at the
+start. Transient user unit `349-status-soak-20260925T051016Z.service` began
+recording at **2026-09-25 05:10:31.797 UTC** (2026-09-24 22:10:31.797 PDT)
+to `/home/bryan/.local/state/349-status/soaks/20260925T051016Z.jsonl`.
+Its baseline records host service PID `741952`, `hello.build=9ddb3b6`,
+`hello.build_sha=b249b2114`, and the matching full ELF SHA-256 above. The
+recorder unit started as PID `763720`; its first samples were linked and had
+no failures. The 24-hour deadline is approximately 2026-09-26 05:10:31 UTC,
+subject to recorder completion and final evidence review.
 
 No changes were pushed.
