@@ -10,7 +10,7 @@ if ! command -v eim >/dev/null 2>&1; then
     exit 1
 fi
 
-if eim list 2>/dev/null | grep -q "$IDF_VERSION"; then
+if [ -f "$EIM_ROOT/tools/activate_idf_${IDF_VERSION}.sh" ]; then
     echo "ESP-IDF $IDF_VERSION already installed in $EIM_ROOT"
 else
     echo "Installing ESP-IDF $IDF_VERSION into $EIM_ROOT ..."
