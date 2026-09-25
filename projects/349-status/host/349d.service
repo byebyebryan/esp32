@@ -6,7 +6,7 @@ After=graphical-session.target
 [Service]
 Type=simple
 WorkingDirectory=%h/code/esp32/projects/349-status/host
-ExecStart=/usr/bin/uv run --frozen 349d
+ExecStart=/usr/bin/env uv run --frozen 349d
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=1

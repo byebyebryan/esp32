@@ -49,8 +49,9 @@ systemctl --user enable --now 349d
 journalctl --user -u 349d -f
 ```
 
-The unit needs `DBUS_SESSION_BUS_ADDRESS` in the user manager environment
-(normal on a graphical login; check with `systemctl --user show-environment`).
+The unit resolves `uv` from the user manager's `PATH` and needs
+`DBUS_SESSION_BUS_ADDRESS` there too (normal on a graphical login; check both
+with `systemctl --user show-environment`).
 
 ## 349ctl
 
