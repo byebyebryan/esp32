@@ -47,6 +47,30 @@ host sleep also removes USB power. A powered-off board cannot show a host
 asleep overlay or keep a visible clock running; the replug result exercises
 the corresponding cold-start recovery path.
 
+### Mirrored popup expiry follow-up — 2026-09-24 PDT
+
+Real desktop popups could disappear while their board cards remained in the
+mirror's count. On this host, DankMaterialShell hides a timed-out popup but
+retains its notification-center entry without emitting `NotificationClosed`.
+Before the fix, a controlled 1,200 ms popup raised the mirror count from 16
+to 17; the count stayed at 17 after popup timeout and returned to 16 only
+after explicit desktop close.
+
+The host now expires mirrored board cards at the requested positive timeout,
+or at the configured fallback for a server-default (`-1`) timeout. A zero
+timeout remains persistent until explicit close. This does not remove the
+desktop notification-center entry. The host suite passed 82 tests, including
+a live D-Bus mirror test that observes a device `close` without first closing
+the desktop notification. No firmware change was required.
+
+`349d.service` restarted at 22:34:34 PDT and reconnected to firmware build
+`9ddb3b6`. The fresh sync cleared the stale board state (`notifs: 0`). A live
+`-1` timeout probe then raised the mirror count to 1 and returned it to 0
+after the five-second fallback, before the probe's desktop ID was explicitly
+closed for cleanup. The service remained linked with no warning or error in
+its journal. This is a headless count/protocol check; a separate visual claim
+about the physical display is not made here.
+
 ### Deferred checks and limits
 
 - The 24-hour connected soak was stopped at the user's request because its

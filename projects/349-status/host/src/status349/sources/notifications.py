@@ -79,6 +79,13 @@ def parse_closed_body(body: list) -> tuple[int, int] | None:
     return int(body[0]), int(body[1])
 
 
+def effective_popup_timeout_ms(expire: int, urgency: int, cfg: NotificationsConfig) -> int:
+    """A desktop popup may time out without closing its history entry."""
+    if expire >= 0:
+        return expire
+    return cfg.critical_popup_timeout_ms if urgency >= 2 else cfg.popup_timeout_ms
+
+
 class NotificationSource:
     def __init__(
         self,
@@ -104,6 +111,7 @@ class NotificationSource:
         self._daemon_to_local: dict[int, int] = {}
         self._local_to_daemon: dict[int, int | None] = {}
         self._mirrored_local_ids: set[int] = set()
+        self._expiry_deadlines: dict[int, float] = {}
         self.failed = asyncio.Event()
         self.failure: BaseException | None = None
 
@@ -147,9 +155,27 @@ class NotificationSource:
 
     async def _close_mirrored_notifications(self) -> None:
         for local_id in tuple(self._mirrored_local_ids):
-            self._outbox.pop(local_id, None)
+            self._forget_local(local_id)
             await self._on_close(local_id)
-        self._mirrored_local_ids.clear()
+
+    def _forget_local(self, local_id: int) -> None:
+        self._mirrored_local_ids.discard(local_id)
+        self._expiry_deadlines.pop(local_id, None)
+        self._outbox.pop(local_id, None)
+        self._local_to_daemon.pop(local_id, None)
+        for daemon_id, mapped_id in tuple(self._daemon_to_local.items()):
+            if mapped_id == local_id:
+                self._daemon_to_local.pop(daemon_id, None)
+        for key, (pending_id, _requested_id) in tuple(self._by_serial.items()):
+            if pending_id == local_id:
+                self._by_serial.pop(key, None)
+
+    async def _expire_due(self) -> None:
+        now = time.monotonic()
+        for local_id, deadline in tuple(self._expiry_deadlines.items()):
+            if deadline <= now and self._expiry_deadlines.get(local_id) == deadline:
+                self._forget_local(local_id)
+                await self._on_close(local_id)
 
     async def dismiss(self, local_id: int) -> None:
         daemon_id = self._local_to_daemon.get(local_id)
@@ -225,6 +251,7 @@ class NotificationSource:
         self._local_to_daemon.clear()
         self._outbox.clear()
         self._outbox_ready.clear()
+        self._expiry_deadlines.clear()
         self._discard_messages()
 
     def _discard_messages(self) -> None:
@@ -248,7 +275,16 @@ class NotificationSource:
 
     async def _process_loop(self) -> None:
         while True:
-            message = await self._messages.get()
+            await self._expire_due()
+            timeout = None
+            if self._expiry_deadlines:
+                timeout = max(0.0, min(self._expiry_deadlines.values()) - time.monotonic())
+            try:
+                message = await self._messages.get() if timeout is None else await asyncio.wait_for(
+                    self._messages.get(), timeout=timeout
+                )
+            except asyncio.TimeoutError:
+                continue
             try:
                 await self._handle(message)
             except Exception:
@@ -290,17 +326,9 @@ class NotificationSource:
             parsed = parse_closed_body(message.body)
             if parsed is not None:
                 daemon_id, _reason = parsed
-                local_id = self._daemon_to_local.pop(daemon_id, None)
+                local_id = self._daemon_to_local.get(daemon_id)
                 if local_id is not None:
-                    self._mirrored_local_ids.discard(local_id)
-                    self._outbox.pop(local_id, None)
-                    self._local_to_daemon.pop(local_id, None)
-                    for other_id, mapped_local_id in tuple(self._daemon_to_local.items()):
-                        if mapped_local_id == local_id:
-                            self._daemon_to_local.pop(other_id, None)
-                    for key, (pending_local_id, _requested_id) in tuple(self._by_serial.items()):
-                        if pending_local_id == local_id:
-                            self._by_serial.pop(key, None)
+                    self._forget_local(local_id)
                     await self._on_close(local_id)
 
     async def _handle_notify(self, message: Message) -> None:
@@ -328,6 +356,12 @@ class NotificationSource:
 
         if message.serial and message.sender:
             self._by_serial[(message.sender, message.serial)] = (local_id, replaces)
+
+        timeout_ms = effective_popup_timeout_ms(parsed["expire"], parsed["urgency"], self.cfg)
+        if timeout_ms > 0:
+            self._expiry_deadlines[local_id] = time.monotonic() + timeout_ms / 1000.0
+        else:
+            self._expiry_deadlines.pop(local_id, None)
 
         # Coalesce queued replacements and let NotificationClosed cancel a
         # card that has not reached the serial link yet.

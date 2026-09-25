@@ -11,6 +11,8 @@ def test_defaults():
     assert cfg.notifications.mode == "mirror"
     assert cfg.notifications.device_dismiss == "local"
     assert cfg.notifications.ignore_apps
+    assert cfg.notifications.popup_timeout_ms == 5000
+    assert cfg.notifications.critical_popup_timeout_ms == 0
     assert cfg.bar.preset
 
 
@@ -23,12 +25,14 @@ def test_default_preset_is_copied():
 def test_toml_overlay(tmp_path):
     path = tmp_path / "349d.toml"
     path.write_text(
-        "[link]\nport = '/dev/fake'\n\n[daemon]\ntick_s = 0.25\n\n[notifications]\nmax_visible = 5\n"
+        "[link]\nport = '/dev/fake'\n\n[daemon]\ntick_s = 0.25\n\n"
+        "[notifications]\nmax_visible = 5\npopup_timeout_ms = 4000\n"
     )
     cfg = load_config(str(path))
     assert cfg.link.port == "/dev/fake"
     assert cfg.daemon.tick_s == 0.25
     assert cfg.notifications.max_visible == 5
+    assert cfg.notifications.popup_timeout_ms == 4000
     assert cfg.notifications.device_dismiss == "local"
 
 
@@ -50,6 +54,8 @@ def test_unknown_key_rejected(tmp_path):
     "config_text, message",
     [
         ("[notifications]\nmax_visible = 9\n", "max_visible"),
+        ("[notifications]\npopup_timeout_ms = -1\n", "popup_timeout_ms"),
+        ("[notifications]\ncritical_popup_timeout_ms = true\n", "critical_popup_timeout_ms"),
         ("[bar]\npreset = [" + ",".join("{ id = 'z%d', kind = 'text', w = 1 }" % i for i in range(9)) + "]\n", "zones"),
         ("[bar]\npreset = [{ id = 'wide', kind = 'text', w = 641 }]\n", "w must"),
         ("[bar]\npreset = [{ id = 'a', kind = 'text', w = 310 }, { id = 'b', kind = 'text', w = 310 }]\n", "including gaps"),

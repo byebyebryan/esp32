@@ -271,16 +271,20 @@ propagation.
 
 Parse `Notify` args (app_name, replaces_id, app_icon, summary, body, actions,
 hints, expire_timeout) and `NotificationClosed` (id, reason 1/2/3). Config:
-`mode`, `device_dismiss` (`local|propagate`), `ignore_apps`, `max_visible`.
+`mode`, `device_dismiss` (`local|propagate`), `ignore_apps`, `max_visible`,
+`popup_timeout_ms`, and `critical_popup_timeout_ms`.
 Ship a default `ignore_apps` list for password managers/authenticators:
 notification text can contain OTPs and this display mirrors it. Rate-limit
 bursts to one message per 50 ms.
 
 When the monitor session is lost, mirrored cards are cleared because their
-desktop IDs can no longer be correlated. The desktop owns mirrored-card
-timeouts; `349ctl`-injected cards expire locally when their positive `expire`
-value elapses. A complete device sync prunes locally hidden IDs that are no
-longer active; a capped sync preserves them.
+desktop IDs can no longer be correlated. Mirrored board cards expire locally
+when the popup lifetime elapses: a nonnegative app timeout is honored, while
+`-1` uses the configured fallback (5 s normal/low, persistent critical by
+default). This leaves desktop notification-center history alone. `349ctl`
+injected cards also expire locally when their positive `expire` value elapses.
+A complete device sync prunes locally hidden IDs that are no longer active; a
+capped sync preserves them.
 
 Device: card stack, overflow count badge, touch dismiss → `input`, local
 hidden-id set, unhide on `replaces_id`.
@@ -310,10 +314,18 @@ the count is truthful between syncs. Verified live: card renders, tap hides it
 4. When the device drops the oldest notification at its 8-item cap it now
    increments the overflow count, so `+N more` is correct immediately instead
    of only after the next 60 s sync (which had looked like lag).
+5. **A desktop popup timeout need not close the notification.** On this host,
+   DankMaterialShell sets `popup = false` at timeout but retains the entry in
+   its notification center, so no `NotificationClosed` arrives. A 1.2 s probe
+   raised the mirror count from 16 to 17; it stayed 17 after the popup timeout
+   and returned to 16 only on explicit close. The mirror now expires the board
+   card independently and keeps the desktop entry untouched.
 
 *Accept:* `notify-send` shows both places; desktop dismiss removes the card;
 device dismiss is local by default and propagates when configured; replaced
-notifications update in place; 20-notification burst stays responsive.
+notifications update in place; popup expiry clears the board card and overflow
+count even if desktop history retains the notification; 20-notification burst
+stays responsive.
 
 **Findings (dbus-broker specifics):**
 

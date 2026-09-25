@@ -14,6 +14,7 @@ from status349.sources.notifications import (
     NOTIFICATIONS_NAME,
     NOTIFICATIONS_PATH,
     NotificationSource,
+    effective_popup_timeout_ms,
     is_ignored,
     parse_closed_body,
     parse_notify_body,
@@ -53,7 +54,15 @@ def test_is_ignored():
     assert not is_ignored("Firefox", ["keepassxc"])
 
 
-def _notify_call(sender: str, serial: int, replaces_id: int, summary: str) -> Message:
+def test_popup_timeout_uses_app_request_or_server_default():
+    cfg = default_config().notifications
+    assert effective_popup_timeout_ms(1200, 1, cfg) == 1200
+    assert effective_popup_timeout_ms(-1, 1, cfg) == 5000
+    assert effective_popup_timeout_ms(-1, 2, cfg) == 0
+    assert effective_popup_timeout_ms(0, 1, cfg) == 0
+
+
+def _notify_call(sender: str, serial: int, replaces_id: int, summary: str, expire: int = 5000) -> Message:
     return Message(
         destination=NOTIFICATIONS_NAME,
         path=NOTIFICATIONS_PATH,
@@ -62,7 +71,7 @@ def _notify_call(sender: str, serial: int, replaces_id: int, summary: str) -> Me
         signature="susssasa{sv}i",
         sender=sender,
         serial=serial,
-        body=["test-app", replaces_id, "", summary, "body", [], {}, 5000],
+        body=["test-app", replaces_id, "", summary, "body", [], {}, expire],
     )
 
 
@@ -109,6 +118,7 @@ def test_notify_reply_correlation_uses_client_sender_and_returned_id():
         await source._handle(_closed_signal(222))
         assert closed == [2]
         assert 111 in source._daemon_to_local
+        assert 2 not in source._expiry_deadlines
 
     asyncio.run(scenario())
 
@@ -163,6 +173,64 @@ def test_late_notify_reply_after_close_cannot_restore_mapping():
         await source._handle_notify(_notify_call(":1.55", 11, 888, "new card"))
         await source._handle(_notify_reply(":1.55", 11, 888))
         assert source._daemon_to_local == {888: 2}
+
+    asyncio.run(scenario())
+
+
+def test_server_default_popup_expires_without_desktop_close():
+    async def scenario():
+        closed = []
+        close_seen = asyncio.Event()
+
+        async def on_close(local_id):
+            closed.append(local_id)
+            close_seen.set()
+
+        cfg = default_config().notifications
+        cfg.popup_timeout_ms = 30
+        source = NotificationSource(cfg, lambda _message: asyncio.sleep(0), on_close)
+        await source._handle_notify(_notify_call(":1.70", 1, 0, "temporary", expire=-1))
+        await source._handle(_notify_reply(":1.70", 1, 901))
+        task = asyncio.create_task(source._process_loop())
+        try:
+            await asyncio.wait_for(close_seen.wait(), 1)
+            assert closed == [1]
+            assert source._mirrored_local_ids == set()
+            assert source._daemon_to_local == {}
+            assert source._local_to_daemon == {}
+            assert source._by_serial == {}
+            assert source._outbox == {}
+            assert source._expiry_deadlines == {}
+            await source._handle(_closed_signal(901))
+            assert closed == [1]
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+def test_replacement_resets_popup_expiry():
+    async def scenario():
+        closed = []
+
+        async def on_close(local_id):
+            closed.append(local_id)
+
+        cfg = default_config().notifications
+        source = NotificationSource(cfg, lambda _message: asyncio.sleep(0), on_close)
+        await source._handle_notify(_notify_call(":1.71", 1, 0, "first", expire=-1))
+        await source._handle(_notify_reply(":1.71", 1, 902))
+        source._expiry_deadlines[1] = time.monotonic() - 1
+        await source._handle_notify(_notify_call(":1.71", 2, 902, "replacement", expire=-1))
+        await source._handle(_notify_reply(":1.71", 2, 902))
+        await source._expire_due()
+        assert closed == []
+        assert source._daemon_to_local == {902: 1}
+        source._expiry_deadlines[1] = time.monotonic() - 1
+        await source._expire_due()
+        assert closed == [1]
+        assert source._daemon_to_local == {}
 
     asyncio.run(scenario())
 
@@ -287,7 +355,7 @@ async def _wait_for(predicate, timeout: float = 5.0) -> None:
     raise AssertionError("condition not met in time")
 
 
-async def _notify(summary: str) -> int:
+async def _notify(summary: str, expire: int = 5000) -> int:
     bus = await MessageBus(bus_type=BusType.SESSION).connect()
     try:
         reply = await bus.call(
@@ -297,7 +365,7 @@ async def _notify(summary: str) -> int:
                 interface=NOTIFICATIONS_NAME,
                 member="Notify",
                 signature="susssasa{sv}i",
-                body=["349-test", 0, "", summary, "body", [], {}, 5000],
+                body=["349-test", 0, "", summary, "body", [], {}, expire],
             )
         )
         return int(reply.body[0])
@@ -344,6 +412,37 @@ def test_notification_mirror_and_desktop_close():
                 await _close(daemon_id)
                 daemon_id = None
                 await _wait_for(lambda: any(m["t"] == "close" for m in fake.received))
+            finally:
+                if daemon_id is not None:
+                    await _close(daemon_id)
+                stop.set()
+                await asyncio.wait_for(task, 5)
+
+        asyncio.run(scenario())
+    finally:
+        fake.stop()
+
+
+@pytest.mark.skipif(not HAVE_SESSION_BUS, reason="no session bus")
+def test_mirrored_popup_expires_without_desktop_close():
+    fake = FakeDevice().start()
+    try:
+        cfg = default_config()
+        cfg.link.port = fake.path
+        cfg.daemon.tick_s = 0.05
+        cfg.daemon.sync_interval_s = 0.5
+        summary = f"349-expire-{os.getpid()}-{int(time.time() * 1000)}"
+
+        async def scenario():
+            stop = asyncio.Event()
+            task = asyncio.create_task(Daemon(cfg, stop).run())
+            daemon_id = None
+            try:
+                await _wait_for(lambda: any(m["t"] == "sync" for m in fake.received))
+                daemon_id = await _notify(summary, expire=300)
+                await _wait_for(lambda: any(m["t"] == "notify" and m["summary"] == summary for m in fake.received))
+                local_id = next(m["id"] for m in fake.received if m["t"] == "notify" and m["summary"] == summary)
+                await _wait_for(lambda: any(m["t"] == "close" and m["id"] == local_id for m in fake.received))
             finally:
                 if daemon_id is not None:
                     await _close(daemon_id)

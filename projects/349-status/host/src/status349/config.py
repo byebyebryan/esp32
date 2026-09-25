@@ -71,6 +71,8 @@ class NotificationsConfig:
     device_dismiss: str = "local"  # local | propagate
     ignore_apps: list[str] = field(default_factory=lambda: list(DEFAULT_IGNORE_APPS))
     max_visible: int = 3
+    popup_timeout_ms: int = 5000  # fallback when Notify requests server default (-1)
+    critical_popup_timeout_ms: int = 0  # 0 keeps critical cards until close
 
 
 @dataclass
@@ -253,6 +255,10 @@ def validate_config(cfg: Config) -> None:
         or not 0 <= cfg.notifications.max_visible <= DEVICE_MAX_NOTIFS
     ):
         raise ValueError(f"notifications.max_visible must be an integer from 0 to {DEVICE_MAX_NOTIFS}")
+    for field_name in ("popup_timeout_ms", "critical_popup_timeout_ms"):
+        timeout = getattr(cfg.notifications, field_name)
+        if isinstance(timeout, bool) or not isinstance(timeout, int) or not 0 <= timeout <= 86_400_000:
+            raise ValueError(f"notifications.{field_name} must be an integer from 0 to 86400000")
 
     if not isinstance(cfg.bar.preset, list):
         raise ValueError("bar.preset must be an array of tables")

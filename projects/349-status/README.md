@@ -82,6 +82,8 @@ sync_interval_s = 60.0
 mode = "mirror"            # mirror | off (consume is not implemented)
 device_dismiss = "local"   # local | propagate
 max_visible = 3
+popup_timeout_ms = 5000           # fallback when an app requests server default (-1)
+critical_popup_timeout_ms = 0     # 0 keeps critical cards until closed
 ignore_apps = ["KeePassXC", "Bitwarden", "1Password"]
 
 [bar]
@@ -105,9 +107,15 @@ sending a frame the device cannot accept. Reload after editing with
 
 V1 uses Montserrat with a bundled Source Han Sans CJK fallback for bar and
 notification text. Latin accents become base letters; glyphs outside the font
-set show a visible placeholder. `349ctl notify` cards expire after about five
-seconds by default; desktop notifications remain owned by the desktop
-notification daemon.
+set show a visible placeholder.
+
+`349ctl notify` cards expire after about five seconds by default. Mirrored
+cards follow a positive app timeout; for the server-default timeout (`-1`),
+normal/low cards use `popup_timeout_ms` and
+critical cards use `critical_popup_timeout_ms`; an app timeout of `0` keeps
+the card until explicit close. A timeout hides only the board card: the
+desktop notification daemon keeps its notification-center history.
+Desktop close and replacement still update the board immediately.
 
 The daemon sends a ping every four seconds even when the bar does not change.
 While the board stays powered, it shows `host asleep` when USB activity stops
