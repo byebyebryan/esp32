@@ -2,7 +2,7 @@
 
 ## Short-gate closure — 2026-09-24–25 PDT
 
-This run checks the reviewed v1 fixes on the physical ESP32-S3 3.49 V2.
+This run checks the reviewed v1 fixes on Starship's ESP32-S3 3.49 V2.
 The results below are observations from this run, not inherited from the
 2026-09-23 prototype checks in [PLAN.md](PLAN.md). The physical short gates
 passed. The user chose to defer the optional 24-hour connected soak; no
@@ -114,6 +114,25 @@ retain message contents. Its 33 non-test `ghostty` entries used 72 distinct
 code points, all covered by the current font. No Chrome, Google Calendar, or
 Slack entries were retained in that sample, so their coverage is unmeasured.
 
+### Snap second-board bring-up smoke — 2026-09-25 PDT
+
+Snap's clone was at `36b0dfc`. Its second board uses USB serial ID
+`28:84:85:92:C4:3C`; the factory bootloader/partition and app images were
+backed up privately under
+`~/.local/share/esp32/backups/snap-c43c-factory-2026-09-25/` before flashing.
+The user confirmed the normal bar on the first flash, and `349d` was enabled,
+active, and linked.
+
+Initial mirrored and direct notification probes entered the host state but
+showed no board card, even after a full sync. After diagnostic reflashes and
+reconnects, the user saw a direct card and a desktop notification mirrored on
+the board. The temporary device logs and stack change were removed; a direct
+card remained visible with the original firmware settings. The last flashed
+build reported `36b0dfc-dirty` because Snap still had two setup/service edits
+in its checkout; no diagnostic firmware edits remain. The cause of the initial
+no-card state was not established. This is a second-board smoke check, not a
+repeat of all v1 short gates or a long-duration stability check.
+
 ### Deferred checks and limits
 
 - The 24-hour connected soak was stopped at the user's request because its
@@ -171,4 +190,4 @@ recorder unit started as PID `763720`. At the user's request it stopped at
 record is `outcome=interrupted`, with no sampled failures. The normal daemon
 remained active and linked. This attempt is not a 24-hour soak pass.
 
-No changes were pushed.
+No changes were pushed during this historical soak attempt.

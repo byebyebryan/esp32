@@ -21,7 +21,7 @@ notification mode, WiFi, audio, battery tuning, now-playing/media controls
 (M4 dropped), and bespoke per-content widgets (the status area is generic
 zones).
 
-## Current validation boundary (2026-09-24)
+## Current validation boundary (2026-09-25)
 
 The hardware findings below describe the 2026-09-23 builds. The fresh
 on-device run for the later review fixes is recorded in
@@ -33,7 +33,7 @@ that were exercised.
 |---|---|
 | M0–M3, M5 implementation | Present in source; fresh short-gate results are in `ACCEPTANCE.md` |
 | M4 media | Dropped from v1; protocol/rendering hooks remain dormant |
-| V1 acceptance | Static-bar, touch/notification, and replug checks passed. The user deferred the optional 24-hour soak after a 252 s attempt; no long-duration stability claim is made. This installation assumes USB power is removed during host sleep; actual host suspend/wake is unverified. |
+| V1 acceptance | The first board passed static-bar, touch/notification, and replug checks. Snap's second board has a separate bring-up smoke check in `ACCEPTANCE.md`, not the full short-gate run. The user deferred the optional 24-hour soak after a 252 s attempt; no long-duration stability claim is made. The first installation assumes USB power is removed during host sleep; actual host suspend/wake is unverified. |
 
 The acceptance run must record which host process and device firmware build
 were used. The device `hello.build` and `hello.build_sha` report its app
