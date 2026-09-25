@@ -321,12 +321,14 @@ static void make_card(lv_obj_t *parent, const status_notif_t *notif)
     lv_obj_set_flex_align(top, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(top, 6, 0);
 
-    lv_obj_t *app = lv_label_create(top);
-    lv_label_set_text(app, notif->app[0] ? notif->app : "?");
-    lv_obj_set_style_text_font(app, SMALL_FONT, 0);
-    lv_obj_set_style_text_color(app, lv_color_hex(MUTED_COLOR), 0);
-    lv_label_set_long_mode(app, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(app, 80);
+    if (notif->app[0]) {
+        lv_obj_t *app = lv_label_create(top);
+        lv_label_set_text(app, notif->app);
+        lv_obj_set_style_text_font(app, SMALL_FONT, 0);
+        lv_obj_set_style_text_color(app, lv_color_hex(MUTED_COLOR), 0);
+        lv_label_set_long_mode(app, LV_LABEL_LONG_DOT);
+        lv_obj_set_width(app, 80);
+    }
 
     lv_obj_t *summary = lv_label_create(top);
     lv_label_set_text(summary, notif->summary[0] ? notif->summary : "(no summary)");
