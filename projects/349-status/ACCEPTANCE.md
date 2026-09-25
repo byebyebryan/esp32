@@ -1,11 +1,12 @@
 # 349-status v1 device acceptance
 
-## Run in progress — 2026-09-24 PDT
+## Short-gate closure — 2026-09-24–25 PDT
 
 This run checks the reviewed v1 fixes on the physical ESP32-S3 3.49 V2.
 The results below are observations from this run, not inherited from the
-2026-09-23 prototype checks in [PLAN.md](PLAN.md). V1 remains open until a
-fresh 24-hour connected soak passes.
+2026-09-23 prototype checks in [PLAN.md](PLAN.md). The physical short gates
+passed. The user chose to defer the optional 24-hour connected soak; no
+long-duration stability claim follows from this run.
 
 ### Build and environment
 
@@ -46,11 +47,12 @@ host sleep also removes USB power. A powered-off board cannot show a host
 asleep overlay or keep a visible clock running; the replug result exercises
 the corresponding cold-start recovery path.
 
-### Open gates
+### Deferred checks and limits
 
-- Fresh 24-hour connected soak after the short gates: record service and
-  device identity, unexpected resets, link errors, stale cards, and false
-  overlays. The run below has started; no clean 24-hour result has been claimed.
+- The 24-hour connected soak was stopped at the user's request because its
+  expected value did not justify continuing it now. No soak pass is claimed.
+- The recorder cannot see pixels, so unattended operation would not prove
+  the absence of every brief stale card or false overlay.
 
 Actual host suspend/wake was not exercised. The assumption that USB power is
 removed during sleep has not been measured on this host, and the manual
@@ -72,8 +74,8 @@ toward the 24-hour window.
 The recorder also samples at the deadline; a six-second check with a two-second
 interval recorded samples at 2, 4, and 6 seconds before reporting success.
 
-Launch a fresh connected run with a unique UTC run ID in both the unit and
-output names:
+If a future connected soak is useful, launch it with a unique UTC run ID in
+both the unit and output names:
 
 ```sh
 rtk systemd-run --user --unit=349-status-soak-RUN_ID \
@@ -86,10 +88,10 @@ rtk systemd-run --user --unit=349-status-soak-RUN_ID \
   --device-path /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_28:84:85:92:C2:20-if00
 ```
 
-The recorder cannot see pixels. The board still needs a human visual check
-at the soak start and end for stale cards or false overlays.
+The recorder cannot see pixels. A future soak would still need a human visual
+check at its start and end for stale cards or false overlays.
 
-### Connected soak started
+### Deferred soak attempt
 
 The user confirmed a normal bar with no stale card or false overlay at the
 start. Transient user unit `349-status-soak-20260925T051016Z.service` began
@@ -97,8 +99,9 @@ recording at **2026-09-25 05:10:31.797 UTC** (2026-09-24 22:10:31.797 PDT)
 to `/home/bryan/.local/state/349-status/soaks/20260925T051016Z.jsonl`.
 Its baseline records host service PID `741952`, `hello.build=9ddb3b6`,
 `hello.build_sha=b249b2114`, and the matching full ELF SHA-256 above. The
-recorder unit started as PID `763720`; its first samples were linked and had
-no failures. The 24-hour deadline is approximately 2026-09-26 05:10:31 UTC,
-subject to recorder completion and final evidence review.
+recorder unit started as PID `763720`. At the user's request it stopped at
+**2026-09-25 05:14:43.795 UTC**, after 252.019 s and 16 samples. Its final
+record is `outcome=interrupted`, with no sampled failures. The normal daemon
+remained active and linked. This attempt is not a 24-hour soak pass.
 
 No changes were pushed.

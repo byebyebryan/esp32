@@ -32,14 +32,14 @@ that were exercised.
 |---|---|
 | M0–M3, M5 implementation | Present in source; fresh short-gate results are in `ACCEPTANCE.md` |
 | M4 media | Dropped from v1; protocol/rendering hooks remain dormant |
-| V1 acceptance | Static-bar, touch/notification, and replug checks passed; a 24-hour connected soak is running from 2026-09-25 05:10:31 UTC. This installation assumes USB power is removed during host sleep; actual host suspend/wake is unverified. |
+| V1 acceptance | Static-bar, touch/notification, and replug checks passed. The user deferred the optional 24-hour soak after a 252 s attempt; no long-duration stability claim is made. This installation assumes USB power is removed during host sleep; actual host suspend/wake is unverified. |
 
 The acceptance run must record which host process and device firmware build
 were used. The device `hello.build` and `hello.build_sha` report its app
 descriptor version and an ELF hash prefix; a running service or the
 `fw=0.2.0` label alone does not identify the revision.
 
-### Active goal loop: on-device v1 acceptance
+### On-device v1 acceptance loop
 
 1. Record the reviewed source revision, host process start time, board path,
    built firmware hash, and the device's `hello.build_sha`. Bring the service
@@ -53,9 +53,10 @@ descriptor version and an ELF hash prefix; a running service or the
    removes USB power: the board cannot show an asleep overlay or keep its clock
    visible while off. Record actual host suspend/wake as an untested host
    behavior rather than using a powered-board sleep gate.
-4. After the short gates pass, run a fresh 24-hour connected soak. Record
-   unexpected resets, link errors, stale cards, and false overlays. A failed
-   gate is repaired and repeated before declaring v1 closed.
+4. The user deferred the optional 24-hour connected soak as low value for now.
+   Keep the recorder available for a later stability question, but do not
+   treat the interrupted attempt as a pass. A failed short gate is repaired
+   and repeated before declaring v1 short-gate acceptance closed.
 
 This loop is hardware acceptance work. The source fixes and offline builds do
 not stand in for flashing, service rollout, or visual/touch observations.
@@ -351,9 +352,10 @@ the user manager environment.
 
 *Accept:* `systemctl --user enable --now 349d`; survives replug and daemon
 restarts; `349ctl pause` frees the tty for `idf.py flash` even across daemon
-restarts; 24 h soak clean; crash-loop test (daemon restarts repeatedly, device
-returns to correct state). Actual host suspend/wake is a separate host
-integration limit under the power-off-on-sleep assumption.
+restarts; crash-loop test (daemon restarts repeatedly, device returns to
+correct state). The user deferred the optional 24 h soak; actual host
+suspend/wake is a separate integration limit under the power-off-on-sleep
+assumption.
 
 **Done on hardware (2026-09-23):** `349d.service` installed and enabled;
 `349ctl status|text|notify|pause|resume|reload|log` over the Unix socket plus
@@ -361,7 +363,8 @@ integration limit under the power-off-on-sleep assumption.
 daemon restarts; SIGHUP/`systemctl --user reload` applies a config change live;
 three consecutive service restarts each recovered (hello → sync, bar restored).
 The service was left running for a 24 h soak. The current validation boundary
-above supersedes this historical status; the connected soak remains open.
+above supersedes this historical status; the later connected soak was
+explicitly deferred by the user, without a pass claim.
 
 **M5 findings:**
 
