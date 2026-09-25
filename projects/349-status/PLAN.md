@@ -22,22 +22,24 @@ zones).
 
 ## Current validation boundary (2026-09-24)
 
-The hardware findings below describe the 2026-09-23 builds. The later review
-fixes need a fresh on-device check before they inherit those results. Host
-tests and firmware builds establish code readiness, not device acceptance.
+The hardware findings below describe the 2026-09-23 builds. The fresh
+on-device run for the later review fixes is recorded in
+[ACCEPTANCE.md](ACCEPTANCE.md). Host tests and firmware builds establish code
+readiness; the recorded board observations establish only the short gates
+that were exercised.
 
 | Area | Current boundary |
 |---|---|
-| M0–M3, M5 implementation | Present in source; earlier device findings are historical |
+| M0–M3, M5 implementation | Present in source; fresh short-gate results are in `ACCEPTANCE.md` |
 | M4 media | Dropped from v1; protocol/rendering hooks remain dormant |
-| V1 acceptance | Static-bar liveness, touch/notification regressions, reconnect and sleep/resume, then a clean 24-hour connected soak |
+| V1 acceptance | Static-bar, touch/notification, and replug checks passed; suspend/resume and a clean 24-hour connected soak remain open |
 
 The acceptance run must record which host process and device firmware build
 were used. The device `hello.build` and `hello.build_sha` report its app
 descriptor version and an ELF hash prefix; a running service or the
 `fw=0.2.0` label alone does not identify the revision.
 
-### Next goal loop: on-device v1 acceptance (planned)
+### Active goal loop: on-device v1 acceptance
 
 1. Record the reviewed source revision, host process start time, board path,
    built firmware hash, and the device's `hello.build_sha`. Bring the service
