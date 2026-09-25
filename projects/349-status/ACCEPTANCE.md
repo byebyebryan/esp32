@@ -64,6 +64,8 @@ and a 6-second live dry run passed with matching firmware and no failures;
 a deliberately wrong build was rejected at baseline. A separate six-second
 transient user-unit run exited successfully. These dry runs do not count
 toward the 24-hour window.
+The recorder also samples at the deadline; a six-second check with a two-second
+interval recorded samples at 2, 4, and 6 seconds before reporting success.
 
 After suspend/resume passes, launch a fresh run with a unique UTC run ID in
 both the unit and output names:

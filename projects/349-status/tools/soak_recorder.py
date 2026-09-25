@@ -189,14 +189,13 @@ def main() -> int:
             "alive": previous_alive, "journal_cursor": cursor,
         })
 
+        deadline = started + args.duration
         next_sample = started + args.interval
         while not STOP:
-            remaining = min(next_sample - time.monotonic(), started + args.duration - time.monotonic())
+            remaining = min(next_sample, deadline) - time.monotonic()
             if remaining > 0:
                 time.sleep(min(remaining, 1))
                 continue
-            if time.monotonic() >= started + args.duration:
-                break
             sampled_at = time.monotonic()
             boot_now = time.clock_gettime(time.CLOCK_BOOTTIME)
             if (boot_now - last_boot) - (sampled_at - last_mono) > 3:
@@ -250,7 +249,7 @@ def main() -> int:
                 "failures": sorted(set(failures)),
             })
             samples += 1
-            if failures:
+            if failures or sampled_at >= deadline:
                 break
             next_sample += args.interval
         outcome = "interrupted" if STOP else "failed" if failures else "passed"
