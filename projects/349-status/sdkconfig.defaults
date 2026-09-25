@@ -8,6 +8,9 @@ CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_FREERTOS_HZ=1000
+# Enable per-core idle runtime counters for the 10-second CPU headroom log.
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y
 # Logs and framed data share the USB-Serial-JTAG port; the link driver takes it
 # over and usb_serial_jtag_vfs_use_driver() keeps console output working.
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y

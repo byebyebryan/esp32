@@ -6,9 +6,14 @@
  * never touches LVGL.
  */
 
+#include <stdbool.h>
+#include <stdint.h>
+
 #include "display_349.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/idf_additions.h"
 #include "freertos/task.h"
 
 #include "link.h"
@@ -18,6 +23,47 @@
 #include "ui.h"
 
 static const char *TAG = "349-status";
+
+typedef struct {
+    uint32_t core0_idle_us;
+    uint32_t core1_idle_us;
+    int64_t sampled_us;
+    bool valid;
+} cpu_idle_sample_t;
+
+static cpu_idle_sample_t s_cpu_idle;
+
+static uint32_t idle_percent(uint32_t idle_delta, uint64_t elapsed_us)
+{
+    uint64_t percent = ((uint64_t)idle_delta * 100U) / elapsed_us;
+    return percent > 100U ? 100U : (uint32_t)percent;
+}
+
+static bool sample_cpu_idle(uint32_t *core0_percent, uint32_t *core1_percent)
+{
+    /* The configured ESP Timer runtime clock and esp_timer_get_time() are both
+     * in microseconds. Unsigned deltas naturally handle a single 32-bit
+     * runtime-counter wrap between these ten-second samples. */
+    const uint32_t core0_idle_us = (uint32_t)ulTaskGetIdleRunTimeCounterForCore(0);
+    const uint32_t core1_idle_us = (uint32_t)ulTaskGetIdleRunTimeCounterForCore(1);
+    const int64_t sampled_us = esp_timer_get_time();
+
+    bool available = false;
+    if (s_cpu_idle.valid && sampled_us > s_cpu_idle.sampled_us) {
+        const uint64_t elapsed_us = (uint64_t)(sampled_us - s_cpu_idle.sampled_us);
+        const uint32_t core0_delta = core0_idle_us - s_cpu_idle.core0_idle_us;
+        const uint32_t core1_delta = core1_idle_us - s_cpu_idle.core1_idle_us;
+        *core0_percent = idle_percent(core0_delta, elapsed_us);
+        *core1_percent = idle_percent(core1_delta, elapsed_us);
+        available = true;
+    }
+
+    s_cpu_idle.core0_idle_us = core0_idle_us;
+    s_cpu_idle.core1_idle_us = core1_idle_us;
+    s_cpu_idle.sampled_us = sampled_us;
+    s_cpu_idle.valid = true;
+    return available;
+}
 
 void app_main(void)
 {
@@ -43,6 +89,17 @@ void app_main(void)
     ESP_LOGI(TAG, "link and display up");
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(10000));
-        ESP_LOGI(TAG, "alive, host=%s", link_host_connected() ? "yes" : "no");
+        uint32_t core0_idle_percent;
+        uint32_t core1_idle_percent;
+        const char *host = link_host_connected() ? "yes" : "no";
+        if (sample_cpu_idle(&core0_idle_percent, &core1_idle_percent)) {
+            ESP_LOGI(TAG,
+                     "alive, host=%s, cpu_idle_core0_pct=%u, cpu_idle_core1_pct=%u",
+                     host, core0_idle_percent, core1_idle_percent);
+        } else {
+            ESP_LOGI(TAG,
+                     "alive, host=%s, cpu_idle_core0_pct=na, cpu_idle_core1_pct=na",
+                     host);
+        }
     }
 }
