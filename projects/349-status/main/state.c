@@ -243,7 +243,14 @@ void state_hide_notif(int id)
             break;
         }
     }
-    if (!known && s_state.hidden_count < STATUS_MAX_NOTIFS) {
+    if (!known) {
+        if (s_state.hidden_count == STATUS_MAX_NOTIFS) {
+            /* Preserve the newest local dismiss when active cards exceed our
+             * bounded hidden-ID capacity. */
+            memmove(&s_state.hidden_ids[0], &s_state.hidden_ids[1],
+                    sizeof(s_state.hidden_ids[0]) * (STATUS_MAX_NOTIFS - 1));
+            s_state.hidden_count--;
+        }
         s_state.hidden_ids[s_state.hidden_count++] = id;
     }
     s_dirty |= STATE_DIRTY_NOTIF;
@@ -300,6 +307,21 @@ void state_apply_sync(const cJSON *obj)
     const cJSON *overflow = cJSON_GetObjectItemCaseSensitive(obj, "notifs_overflow");
     state_lock();
     s_state.notif_overflow = cJSON_IsNumber(overflow) ? overflow->valueint : 0;
+    /* Only a complete notification snapshot can prove a hidden ID is gone.
+     * A capped snapshot may omit a still-active, locally dismissed card. */
+    if (cJSON_IsArray(notifs) && cJSON_IsNumber(overflow)
+            && overflow->valueint == 0 && cJSON_GetArraySize(notifs) <= STATUS_MAX_NOTIFS) {
+        int retained = 0;
+        for (int h = 0; h < s_state.hidden_count; h++) {
+            for (int i = 0; i < s_state.notif_count; i++) {
+                if (s_state.hidden_ids[h] == s_state.notifs[i].id) {
+                    s_state.hidden_ids[retained++] = s_state.hidden_ids[h];
+                    break;
+                }
+            }
+        }
+        s_state.hidden_count = retained;
+    }
     s_state.got_sync = true;
     s_dirty |= STATE_DIRTY_BAR | STATE_DIRTY_NOTIF;
     state_unlock();

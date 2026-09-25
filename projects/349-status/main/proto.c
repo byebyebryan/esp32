@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "cJSON.h"
+#include "esp_app_desc.h"
 #include "esp_log.h"
 #include "link.h"
 #include "rtc.h"
@@ -25,6 +26,10 @@ void proto_send_hello(void)
     cJSON_AddStringToObject(obj, "t", "hello");
     cJSON_AddNumberToObject(obj, "proto", 1);
     cJSON_AddStringToObject(obj, "fw", "0.2.0");
+    cJSON_AddStringToObject(obj, "build", esp_app_get_description()->version);
+    char build_sha[17];
+    esp_app_get_elf_sha256(build_sha, sizeof(build_sha));
+    cJSON_AddStringToObject(obj, "build_sha", build_sha);
     cJSON *cap = cJSON_AddArrayToObject(obj, "cap");
     cJSON_AddItemToArray(cap, cJSON_CreateString("link"));
     cJSON_AddItemToArray(cap, cJSON_CreateString("bar"));

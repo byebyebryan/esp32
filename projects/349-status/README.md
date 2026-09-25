@@ -21,6 +21,10 @@ idf.py build
 idf.py -p /dev/ttyACM0 flash
 ```
 
+Existing local `sdkconfig` files created before the CJK fallback need the
+Source Han Sans 14/16 px font options enabled; `sdkconfig.defaults` selects
+them for a fresh configuration.
+
 ## Host setup
 
 ```sh
@@ -93,9 +97,17 @@ preset = [
 ```
 
 `max_visible` is limited to 0–8, and the bar preset can contain at most eight
-zones. Invalid configuration is rejected rather than sent as a frame the device
-cannot accept. Reload after editing with `349ctl reload` (or
-`systemctl --user reload 349d`).
+zones. The configured widths must fit the 624 px content area including 8 px
+gaps; a nonspacer with `w = 0` uses 60 px and a spacer uses flex space.
+Invalid configuration is rejected rather than silently dropping zones or
+sending a frame the device cannot accept. Reload after editing with
+`349ctl reload` (or `systemctl --user reload 349d`).
+
+V1 uses Montserrat with a bundled Source Han Sans CJK fallback for bar and
+notification text. Latin accents become base letters; glyphs outside the font
+set show a visible placeholder. `349ctl notify` cards expire after about five
+seconds by default; desktop notifications remain owned by the desktop
+notification daemon.
 
 The daemon sends a ping every four seconds even when the bar does not change.
 The device shows `host asleep` when USB activity stops and `host disconnected`

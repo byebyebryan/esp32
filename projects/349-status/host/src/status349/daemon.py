@@ -33,6 +33,7 @@ log = logging.getLogger("349d")
 
 BAUDRATE = 115200
 PING_INTERVAL_S = 4.0
+PORT_SCAN_INTERVAL_S = 0.5
 
 
 class Daemon:
@@ -56,25 +57,38 @@ class Daemon:
         self._devlog: deque[str] = deque(maxlen=200)
         self._last_rx_mono: float | None = None
         self._needs_sync = False
-        self._config_changed = asyncio.Event()
+        self._tick_wakeup = asyncio.Event()
         self._next_notify_id = 100000
+        self._injected_expiry: dict[int, float] = {}
         self._ipc = IpcServer(self._ipc_handler)
 
     async def run(self) -> None:
-        await self.notifications.start()
-        await self._ipc.start()
-        link = asyncio.create_task(self._link_loop(), name="link")
-        tick = asyncio.create_task(self._tick_loop(), name="tick")
-        ping = asyncio.create_task(self._ping_loop(), name="ping")
         try:
-            await self.stop.wait()
+            await self.notifications.start()
+            await self._ipc.start()
+            workers = {
+                asyncio.create_task(self._link_loop(), name="link"),
+                asyncio.create_task(self._tick_loop(), name="tick"),
+                asyncio.create_task(self._ping_loop(), name="ping"),
+            }
+            stop_waiter = asyncio.create_task(self.stop.wait(), name="stop")
+            notification_failure = asyncio.create_task(self.notifications.failed.wait(), name="notification-failure")
+            try:
+                done, _ = await asyncio.wait(
+                    workers | {stop_waiter, notification_failure}, return_when=asyncio.FIRST_COMPLETED
+                )
+                for worker in workers & done:
+                    worker.result()  # Re-raise a failed worker's exception.
+                    raise RuntimeError(f"{worker.get_name()} stopped unexpectedly")
+                if notification_failure in done:
+                    raise RuntimeError("notification source stopped unexpectedly") from self.notifications.failure
+            finally:
+                for task in workers | {stop_waiter, notification_failure}:
+                    task.cancel()
+                await asyncio.gather(*workers, stop_waiter, notification_failure, return_exceptions=True)
         finally:
             if self._writer is not None:
                 self._writer.close()
-            link.cancel()
-            tick.cancel()
-            ping.cancel()
-            await asyncio.gather(link, tick, ping, return_exceptions=True)
             await self.notifications.stop()
             await self._ipc.stop()
 
@@ -136,8 +150,10 @@ class Daemon:
                     path = find_port()
                 except LinkError as exc:
                     log.debug("no device: %s", exc)
-                    await asyncio.sleep(backoff)
-                    backoff = min(backoff * 2, max_backoff)
+                    # Device discovery is cheap; do not let open-error backoff
+                    # delay a replug after the by-id path reappears.
+                    backoff = min_backoff
+                    await asyncio.sleep(PORT_SCAN_INTERVAL_S)
                     continue
 
             try:
@@ -206,8 +222,10 @@ class Daemon:
         kind = message.get("t")
         if kind == "hello":
             log.info(
-                "device hello: fw=%s proto=%s cap=%s",
+                "device hello: fw=%s build=%s sha=%s proto=%s cap=%s",
                 message.get("fw"),
+                message.get("build"),
+                message.get("build_sha"),
                 message.get("proto"),
                 message.get("cap"),
             )
@@ -243,7 +261,7 @@ class Daemon:
             self.cfg.link.port = self._port_override
         self.model.max_visible = self.cfg.notifications.max_visible
         self._needs_sync = True
-        self._config_changed.set()
+        self._tick_wakeup.set()
         await self.notifications.reconfigure()
         log.info("config reloaded from %s", self.cfg_path)
         return True
@@ -294,6 +312,9 @@ class Daemon:
                 int(time.time()),
             )
             await self._device_notify(message)
+            if message["expire"] > 0:
+                self._injected_expiry[nid] = time.monotonic() + message["expire"] / 1000.0
+                self._tick_wakeup.set()
             return {"ok": True, "id": nid}
         if cmd == "pause":
             self.pause()
@@ -321,12 +342,15 @@ class Daemon:
                 next_sync = time.monotonic() + sync_interval
                 interval_settings = settings
 
+            wait_s = tick
+            if self._injected_expiry:
+                wait_s = min(wait_s, max(0.0, min(self._injected_expiry.values()) - time.monotonic()))
             try:
-                await asyncio.wait_for(self._config_changed.wait(), timeout=tick)
+                await asyncio.wait_for(self._tick_wakeup.wait(), timeout=wait_s)
             except asyncio.TimeoutError:
                 pass
             else:
-                self._config_changed.clear()
+                self._tick_wakeup.clear()
 
             # A reload may have changed both intervals while this wait was
             # active. Reset the sync deadline before processing this tick.
@@ -336,6 +360,12 @@ class Daemon:
             if settings != interval_settings:
                 next_sync = time.monotonic() + sync_interval
                 interval_settings = settings
+
+            now = time.monotonic()
+            for nid, deadline in tuple(self._injected_expiry.items()):
+                if deadline <= now:
+                    self._injected_expiry.pop(nid, None)
+                    await self._device_close(nid)
 
             if self._needs_sync:
                 self._needs_sync = False

@@ -53,12 +53,18 @@ def test_notify_and_close_builders():
     assert proto.close(7) == {"t": "close", "id": 7}
 
 
-def test_notify_fits_device_buffers_without_splitting_utf8():
+def test_notify_uses_supported_glyphs_and_fits_device_buffers():
     message = proto.notify(1, "a" * 30 + "é", "s" * 62 + "é", "b" * 158 + "é", 1, 5000, 42)
-    assert message["app"] == "a" * 30
-    assert message["summary"] == "s" * 62
-    assert message["body"] == "b" * 158
+    assert message["app"] == "a" * 30 + "e"
+    assert message["summary"] == "s" * 62 + "e"
+    assert message["body"] == "b" * 158 + "e"
     assert len(proto.encode(message)) < proto.LINE_MAX
+
+
+def test_non_latin_text_reaches_device_font_fallback():
+    assert proto.display_text("Café 東京 🔋 が") == "Cafe 東京 🔋 が"
+    assert proto.display_text("Cafe\u0301") == "Cafe"
+    assert proto.display_text("first\nsecond") == "first second"
 
 
 def test_encode_rejects_a_line_over_device_limit():

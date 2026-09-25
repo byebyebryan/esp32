@@ -167,6 +167,73 @@ def test_late_notify_reply_after_close_cannot_restore_mapping():
     asyncio.run(scenario())
 
 
+def test_monitor_loss_closes_cards_with_untrustworthy_desktop_ids():
+    async def scenario():
+        closed = []
+        close_seen = asyncio.Event()
+
+        async def noop(_message):
+            pass
+
+        async def on_close(local_id):
+            closed.append(local_id)
+            close_seen.set()
+
+        async def fail_setup():
+            raise RuntimeError("session bus unavailable")
+
+        source = NotificationSource(default_config().notifications, noop, on_close)
+        await source._handle_notify(_notify_call(":1.55", 10, 0, "stale card"))
+        await source._handle(_notify_reply(":1.55", 10, 888))
+        source._setup = fail_setup
+        task = asyncio.create_task(source._monitor_loop())
+        try:
+            await asyncio.wait_for(close_seen.wait(), 1)
+            assert closed == [1]
+            assert source._mirrored_local_ids == set()
+            assert source._daemon_to_local == {}
+            assert source._outbox == {}
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+def test_partial_monitor_setup_closes_created_connection(monkeypatch):
+    async def scenario():
+        created = []
+
+        class FakeBus:
+            def __init__(self, **_kwargs):
+                self.closed = False
+                created.append(self)
+
+            async def connect(self):
+                if len(created) == 2:
+                    raise RuntimeError("monitor connect failed")
+                return self
+
+            def disconnect(self):
+                self.closed = True
+
+        monkeypatch.setattr("status349.sources.notifications.MessageBus", FakeBus)
+
+        async def noop(_message):
+            pass
+
+        async def on_close(_local_id):
+            pass
+
+        source = NotificationSource(default_config().notifications, noop, on_close)
+        with pytest.raises(RuntimeError, match="monitor connect failed"):
+            await source._setup()
+        await source._teardown()
+        assert created[0].closed
+
+    asyncio.run(scenario())
+
+
 def test_close_cancels_a_rate_limited_queued_notify_and_later_card_is_delivered():
     async def scenario():
         delivered = []

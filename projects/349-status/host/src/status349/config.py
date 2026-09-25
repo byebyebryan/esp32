@@ -15,6 +15,9 @@ from dataclasses import dataclass, field
 from . import proto
 
 DEVICE_WIDTH = 640
+BAR_HORIZONTAL_PADDING = 16
+BAR_ZONE_GAP = 8
+BAR_DEFAULT_ZONE_WIDTH = 60
 DEVICE_MAX_ZONES = 8
 DEVICE_MAX_NOTIFS = 8
 ZONE_ID_BYTES = 15
@@ -25,8 +28,7 @@ ZONE_ALIGN_BYTES = 7
 ZONE_KINDS = {"text", "progress", "clock", "media", "spacer"}
 ZONE_KEYS = {"id", "kind", "w", "text", "value", "format", "color", "align"}
 
-# Default 640x172 layout. Fixed widths sum to 340; the spacer absorbs the rest
-# (the device also drops trailing zones if a row overflows).
+# Default 640x172 layout. Fixed widths sum to 340; the spacer absorbs the rest.
 DEFAULT_PRESET: list[dict] = [
     {"id": "clock", "kind": "clock", "w": 80, "format": "%H:%M"},
     {"id": "spacer", "kind": "spacer", "w": 0},
@@ -65,7 +67,7 @@ class DaemonConfig:
 
 @dataclass
 class NotificationsConfig:
-    mode: str = "mirror"  # mirror | off | consume (M3)
+    mode: str = "mirror"  # mirror | off
     device_dismiss: str = "local"  # local | propagate
     ignore_apps: list[str] = field(default_factory=lambda: list(DEFAULT_IGNORE_APPS))
     max_visible: int = 3
@@ -152,13 +154,15 @@ def _validate_zone(zone: object, index: int) -> dict:
     if not {"id", "kind", "w"}.issubset(zone):
         raise ValueError(f"{label} requires id, kind, and w")
 
-    zid = _string_bytes(zone["id"], f"{label}.id", ZONE_ID_BYTES, allow_empty=False)
+    _string_bytes(zone["id"], f"{label}.id", ZONE_ID_BYTES, allow_empty=False)
     kind = _string_bytes(zone["kind"], f"{label}.kind", ZONE_KIND_BYTES, allow_empty=False)
     if kind not in ZONE_KINDS:
         raise ValueError(f"{label}.kind must be one of {', '.join(sorted(ZONE_KINDS))}")
     width = zone["w"]
     if isinstance(width, bool) or not isinstance(width, int) or not 0 <= width <= DEVICE_WIDTH:
         raise ValueError(f"{label}.w must be an integer from 0 to {DEVICE_WIDTH}")
+    if kind == "spacer" and width != 0:
+        raise ValueError(f"{label}.w must be 0 for a flex spacer")
 
     if "text" in zone:
         _string_bytes(zone["text"], f"{label}.text", ZONE_TEXT_BYTES)
@@ -262,10 +266,12 @@ def validate_config(cfg: Config) -> None:
         if zone["id"] in seen_ids:
             raise ValueError(f"bar.preset contains duplicate zone id {zone['id']!r}")
         seen_ids.add(zone["id"])
-        total_width += zone["w"]
+        total_width += zone["w"] or (0 if zone["kind"] == "spacer" else BAR_DEFAULT_ZONE_WIDTH)
         validated_zones.append(zone)
-    if total_width > DEVICE_WIDTH:
-        raise ValueError(f"bar.preset fixed widths total {total_width}; device width is {DEVICE_WIDTH}")
+    total_width += max(0, len(validated_zones) - 1) * BAR_ZONE_GAP
+    usable_width = DEVICE_WIDTH - BAR_HORIZONTAL_PADDING
+    if total_width > usable_width:
+        raise ValueError(f"bar.preset needs {total_width} pixels including gaps; device bar has {usable_width}")
     _validate_sync_size(validated_zones)
 
 

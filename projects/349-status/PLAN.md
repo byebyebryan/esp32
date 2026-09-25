@@ -1,14 +1,16 @@
 # 349-status — plan
 
 Always-on 640x172 desk display for the ESP32-S3-Touch-LCD-3.49 V2: mirrors
-clock, media, host-composed status zones and notifications from one PC over
+clock, host-composed status zones and notifications from one PC over
 USB-Serial-JTAG; touch sends actions back.
 
 Decisions (2026-09-23):
 
 - Extract the 349-hello display pipeline into `components/display_349` (M1).
 - Host dependencies managed with `uv`.
-- v1 is text-only; icons/fonts come later.
+- v1 is text-only. Montserrat remains the primary font, with the bundled
+  Source Han Sans 14/16 px CJK subset as a fallback. Latin accents are reduced
+  to base letters; unsupported glyphs use LVGL's visible placeholder.
 - The status area is **generic zones** composed by the host; notifications,
   clock and media stay typed. New content that fits an existing zone kind does
   not require a firmware change.
@@ -20,10 +22,38 @@ zones).
 
 ## Current validation boundary (2026-09-24)
 
-The hardware findings below describe the 2026-09-23 builds. Subsequent review
-fixes need a fresh on-device check before they inherit those results. V1 closure
-requires a static-bar liveness check, touch and notification regression checks,
-reconnect and host sleep/resume checks, and a clean 24-hour connected soak.
+The hardware findings below describe the 2026-09-23 builds. The later review
+fixes need a fresh on-device check before they inherit those results. Host
+tests and firmware builds establish code readiness, not device acceptance.
+
+| Area | Current boundary |
+|---|---|
+| M0–M3, M5 implementation | Present in source; earlier device findings are historical |
+| M4 media | Dropped from v1; protocol/rendering hooks remain dormant |
+| V1 acceptance | Static-bar liveness, touch/notification regressions, reconnect and sleep/resume, then a clean 24-hour connected soak |
+
+The acceptance run must record which host process and device firmware build
+were used. The device `hello.build` and `hello.build_sha` report its app
+descriptor version and an ELF hash prefix; a running service or the
+`fw=0.2.0` label alone does not identify the revision.
+
+### Next goal loop: on-device v1 acceptance (planned)
+
+1. Record the reviewed source revision, host process start time, board path,
+   built firmware hash, and the device's `hello.build_sha`. Bring the service
+   and board onto that build before treating live observations as evidence.
+2. Check a static bar for more than 10 s with no false stale overlay; then
+   exercise touch dismiss, desktop close, replacement, a 20-card burst,
+   injected-card expiry, bar fit, and representative CJK text and missing
+   glyph placeholders.
+3. Measure replug discovery and full-state recovery against the M2 targets
+   below; check host sleep/resume, RTC continuity, and device CPU headroom.
+4. After the short gates pass, run a fresh 24-hour connected soak. Record
+   unexpected resets, link errors, stale cards, and false overlays. A failed
+   gate is repaired and repeated before declaring v1 closed.
+
+This loop is hardware acceptance work. The source fixes and offline builds do
+not stand in for flashing, service rollout, or visual/touch observations.
 
 ## Architecture
 
@@ -58,7 +88,7 @@ v1 (types in parentheses):
 
 | dir | t | fields |
 |---|---|---|
-| d→h | `hello` | `proto` (int), `fw` (str), `cap` (str[]) |
+| d→h | `hello` | `proto` (int), `fw` (str), `build` (app version), `build_sha` (ELF hash prefix), `cap` (str[]) |
 | h→d | `ping` | optional `ts`; daemon heartbeat every 4 s |
 | d→h | `pong` | optional `ts` echoed from `ping` |
 | h→d | `sync` | `rev` (int) + full `bar`, `clock`, `media`\|null, `notifs`[] (capped), `notifs_overflow` |
@@ -80,19 +110,20 @@ weather, CI, ...); the device never needs to know what they mean.
 
 Rules:
 
-- Host sends full `sync` after port open, after device `hello`, every 60 s, and
-  on a device `resync` request.
+- Host sends `hello` and `ping` after port open, then full `sync` after device
+  `hello`, every 60 s, and on a device `resync` request.
 - `notify.urgency` comes from the `hints` dict, not a `Notify` argument;
   `expire` comes from `expire_timeout`. An absent zone `value`/`text` renders
   as unknown (`--`).
 - Truncation: app ≤ 31 bytes, summary ≤ 63 bytes, body ≤ 159 bytes,
-  UTF-8-safe cuts (matching device string buffers); zone text
-  ellipsized UTF-8-safe; `sync` carries at most `max_visible` cards plus an
-  overflow count, so it always fits the 8 KB line cap.
-- Layout limits: max 8 zones, each `w` clamped so the row fits (device drops
-  trailing zones on overflow and distributes slack to spacers).
-- Rates: `bar` on content change (≤1 Hz), `clock` on `offset` change and hourly
-  (the RTC ticks locally), `ping` every 4 s, notifications event-driven and
+  UTF-8-safe cuts (matching device string buffers); zone text is ellipsized.
+  The host trims cards from a `sync` until its encoded line fits 8 KB.
+- Layout limits: max 8 zones; host config reserves 16 px outer padding and
+  8 px between zones, so every configured zone fits. The device still clamps
+  and drops trailing zones if an external sender sends an oversized bar.
+- Rates: `bar` on sampled content change (normally ≤1 Hz), `clock` on `offset`
+  change (the RTC ticks locally and periodic sync refreshes it), `ping` every
+  4 s, notifications event-driven and
   rate-limited to 20/s; the dormant media path has no host source.
 - Device interpolates `media.pos` between updates.
 - The device never polls the host for content. Lost USB SOF → "host asleep";
@@ -118,7 +149,7 @@ avoids any tooling edge cases with digit-leading component names):
 ```
 components/display_349/
   CMakeLists.txt
-  idf_component.yml        # lvgl/lvgl ^9, esp_lcd_axs15231b, esp_io_expander_tca9554
+  idf_component.yml        # lvgl/lvgl 9.5.0, esp_lcd_axs15231b, esp_io_expander_tca9554
   include/display_349.h
   display_349.c            # panel init, LVGL port, shadow fb, GDMA staging, flush
   touch.c                  # AXS15231B I2C touch + coordinate mapping
@@ -165,11 +196,11 @@ a transitive include path that the version change broke).
 
 ### M2 — Status UI + sources (M)
 
-Starts with a short **content/UX pass**: mock the 640x172 bar, choose the
-default zone preset and the font policy (Montserrat has no CJK/symbol coverage
-and notification text is arbitrary — pick replace-with-fallback vs.
-drop-non-Latin and document it). The mock decides layout; everything after is
-host-side config.
+The default zone preset is host-side config. V1 keeps Montserrat for common
+glyphs and falls back to LVGL's bundled Source Han Sans 14/16 px CJK subset in
+bar and notification text. Latin accents become base letters; glyphs outside
+the bundled font coverage show LVGL's placeholder. On-device acceptance must
+check representative text and the CPU/flash cost of the fallback.
 
 Device: `state.c/h` (model + mutex + dirty flag, no unbounded queue), `ui.c/h`
 (generic zone renderer: flex row, kinds `text|progress|clock|media|spacer`,
@@ -180,8 +211,8 @@ RTC is what carries time through the port-open resets), `proto.c` dispatch,
 
 Host: `config.py` (TOML, defaults + zone preset), `state.py` (merge + revision
 + snapshot), `composition.py` (builds `bar` zones from sources),
-`sources/{clock,sysinfo,volume,power}.py`, `link.py` reconnect loop + write
-queue, and `fake.py` — a pty fake device so host-side work can proceed without
+`sources/{clock,sysinfo,volume,power}.py`, `daemon.py` reconnect and send
+loops, and `fake.py` — a pty fake device so host-side work can proceed without
 flashing.
 
 **Host side done (2026-09-23):** `proto.py`, `state.py`, `config.py`,
@@ -207,26 +238,27 @@ zone added purely in host config (`M2 OK`) appeared without reflashing.
 2. Preset `text` zones keep their static text when no dynamic value is supplied
    (otherwise host-side labels were replaced by `--`).
 
-*Accept:* reconnect → correct state within 1 s; host suspend → asleep ≤10 s;
-resume → recover ≤2 s; device CPU headroom measured with the perf overlay;
+*Accept next:* missing-port discovery checks every 0.5 s; replug → correct
+state within 3 s; host suspend → asleep ≤10 s; resume → recover ≤3 s;
+device CPU headroom measured with the perf overlay;
 clock survives host sleep via RTC; a new zone added purely in host config shows
 up without reflashing; host can run against `fake.py`.
 
 ### M3 — Notifications mirror (M)
 
-Host `sources/notifications.py`: `NotificationSource` strategy
-(`mirror|off|consume`). Monitor connection via
+Host `sources/notifications.py`: `NotificationSource` modes `mirror|off`.
+Monitor connection via
 `org.freedesktop.DBus.Monitoring.BecomeMonitor` with rules
 `interface='org.freedesktop.Notifications'` **plus**
 `type='method_return',sender='org.freedesktop.Notifications'` (sender-narrowed
 to keep unrelated FD-carrying traffic out). The assigned notification ID only
-exists in the unicast method reply, so track `Notify` call serials and map
-`reply_serial` → returned ID. Validated on this machine (2026-09-23,
+exists in the unicast method reply, so track `(client sender, call serial)` and
+map the reply to its returned ID. Validated on this machine (2026-09-23,
 dbus-broker + Quickshell): `Notify` call `serial=2` → reply `uint32 64`;
 `CloseNotification(64)` → `NotificationClosed(id=64, reason=3)`. If correlation
 ever fails, degrade to "desktop dismiss does not remove device cards" — never
-desync silently. Second bus connection for MPRIS/UPower calls and
-`CloseNotification` propagation.
+desync silently. A second bus connection handles `CloseNotification`
+propagation.
 
 Parse `Notify` args (app_name, replaces_id, app_icon, summary, body, actions,
 hints, expire_timeout) and `NotificationClosed` (id, reason 1/2/3). Config:
@@ -234,6 +266,12 @@ hints, expire_timeout) and `NotificationClosed` (id, reason 1/2/3). Config:
 Ship a default `ignore_apps` list for password managers/authenticators:
 notification text can contain OTPs and this display mirrors it. Rate-limit
 bursts to one message per 50 ms.
+
+When the monitor session is lost, mirrored cards are cleared because their
+desktop IDs can no longer be correlated. The desktop owns mirrored-card
+timeouts; `349ctl`-injected cards expire locally when their positive `expire`
+value elapses. A complete device sync prunes locally hidden IDs that are no
+longer active; a capped sync preserves them.
 
 Device: card stack, overflow count badge, touch dismiss → `input`, local
 hidden-id set, unhide on `replaces_id`.
@@ -350,8 +388,9 @@ above supersedes this historical status; the connected soak remains open.
   cards, measure CPU in M2.
 - Host-composed zones can overflow or look bad; the device clamps widths, drops
   trailing zones and ellipsizes, and the zone budget stays small (≤8).
-- Multiple MPRIS players: track owner changes, fall back to none.
-- Fonts: LVGL Montserrat subsets only; non-Latin text needs the M2 decision.
+- Fonts: Source Han Sans covers a bundled CJK subset, not all Unicode; LVGL's
+  placeholder exposes remaining gaps. Check legibility and performance on the
+  board before expanding coverage.
 - Privacy: notification text (OTPs) is mirrored; default `ignore_apps` and a
   README note.
 - Bus implementation: this machine runs **dbus-broker** with Quickshell as the

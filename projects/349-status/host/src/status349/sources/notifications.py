@@ -2,7 +2,7 @@
 
 The desktop notification daemon keeps ownership of notifications; we only
 eavesdrop. A monitor connection cannot send messages, so a second connection is
-kept for `CloseNotification` propagation (and later MPRIS calls).
+kept for `CloseNotification` propagation.
 
 Two bus quirks drive the implementation:
 
@@ -104,14 +104,27 @@ class NotificationSource:
         self._daemon_to_local: dict[int, int] = {}
         self._local_to_daemon: dict[int, int | None] = {}
         self._mirrored_local_ids: set[int] = set()
+        self.failed = asyncio.Event()
+        self.failure: BaseException | None = None
+
+    def _watch_task(self, task: asyncio.Task) -> asyncio.Task:
+        def on_done(done: asyncio.Task) -> None:
+            if done.cancelled():
+                return
+            self.failure = done.exception() or RuntimeError(f"{done.get_name()} stopped unexpectedly")
+            self.failed.set()
+
+        task.add_done_callback(on_done)
+        return task
 
     async def start(self) -> None:
         await self.reconfigure()
 
     async def reconfigure(self) -> None:
         if self.cfg.mode == "off":
-            await self._close_mirrored_notifications()
             await self.stop()
+            await self._close_mirrored_notifications()
+            self._discard_messages()
             log.info("notifications disabled")
             return
         if self.cfg.mode != "mirror":
@@ -120,20 +133,15 @@ class NotificationSource:
             return
         if self._process_task is not None:
             return
-        self._process_task = asyncio.create_task(self._process_loop(), name="notifications")
-        self._send_task = asyncio.create_task(self._send_loop(), name="notify-send")
-        self._monitor_task = asyncio.create_task(self._monitor_loop(), name="notify-monitor")
+        self._process_task = self._watch_task(asyncio.create_task(self._process_loop(), name="notifications"))
+        self._send_task = self._watch_task(asyncio.create_task(self._send_loop(), name="notify-send"))
+        self._monitor_task = self._watch_task(asyncio.create_task(self._monitor_loop(), name="notify-monitor"))
 
     async def stop(self) -> None:
-        for task in (self._monitor_task, self._process_task, self._send_task):
-            if task is not None:
-                task.cancel()
-        for task in (self._monitor_task, self._process_task, self._send_task):
-            if task is not None:
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+        tasks = tuple(task for task in (self._monitor_task, self._process_task, self._send_task) if task is not None)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         self._monitor_task = self._process_task = self._send_task = None
         await self._teardown()
 
@@ -178,13 +186,16 @@ class NotificationSource:
             except Exception as exc:
                 log.warning("notifications unavailable: %s", exc)
             await self._teardown()
+            # Once monitoring was interrupted, desktop IDs can no longer be
+            # trusted. Remove the cards before accepting a new monitor session.
+            await self._close_mirrored_notifications()
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 30.0)
 
     async def _setup(self) -> None:
-        control = await MessageBus(bus_type=BusType.SESSION).connect()
-        monitor = await MessageBus(bus_type=BusType.SESSION, negotiate_unix_fd=True).connect()
-        reply = await monitor.call(
+        self._control = await MessageBus(bus_type=BusType.SESSION).connect()
+        self._monitor = await MessageBus(bus_type=BusType.SESSION, negotiate_unix_fd=True).connect()
+        reply = await self._monitor.call(
             Message(
                 destination="org.freedesktop.DBus",
                 path="/org/freedesktop/DBus",
@@ -197,9 +208,7 @@ class NotificationSource:
         if reply.message_type == MessageType.ERROR:
             raise RuntimeError(f"BecomeMonitor failed: {reply.error_name} {reply.body}")
 
-        monitor.add_message_handler(self._enqueue)
-        self._control = control
-        self._monitor = monitor
+        self._monitor.add_message_handler(self._enqueue)
         log.info("notification mirror active")
 
     async def _teardown(self) -> None:
@@ -216,6 +225,9 @@ class NotificationSource:
         self._local_to_daemon.clear()
         self._outbox.clear()
         self._outbox_ready.clear()
+        self._discard_messages()
+
+    def _discard_messages(self) -> None:
         while not self._messages.empty():
             try:
                 self._messages.get_nowait()

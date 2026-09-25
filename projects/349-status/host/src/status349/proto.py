@@ -7,10 +7,25 @@ the prefix and everything else is ignored.
 from __future__ import annotations
 
 import json
+import unicodedata
 
 PREFIX = "@349 "
 PROTO_VERSION = 1
 LINE_MAX = 8192
+
+
+def display_text(value: str) -> str:
+    """Keep Unicode for the device font fallback and simplify Latin accents."""
+    chars: list[str] = []
+    for char in unicodedata.normalize("NFC", value):
+        if char in "\r\n\t":
+            char = " "
+        elif unicodedata.name(char, "").startswith("LATIN"):
+            base = unicodedata.normalize("NFKD", char)
+            if base and " " <= base[0] <= "~":
+                char = base[0]
+        chars.append(char)
+    return "".join(chars)
 
 
 def clip_utf8(value: str, max_bytes: int) -> str:
@@ -64,9 +79,9 @@ def notify(nid: int, app: str, summary: str, body: str, urgency: int, expire: in
     return {
         "t": "notify",
         "id": int(nid),
-        "app": clip_utf8(app, 31),
-        "summary": clip_utf8(summary, 63),
-        "body": clip_utf8(body, 159),
+        "app": clip_utf8(display_text(app), 31),
+        "summary": clip_utf8(display_text(summary), 63),
+        "body": clip_utf8(display_text(body), 159),
         "urgency": int(urgency),
         "expire": int(expire),
         "ts": int(ts),

@@ -6,7 +6,7 @@ so the daemon can cheaply detect changes.
 
 from __future__ import annotations
 
-from .proto import clip_utf8
+from .proto import clip_utf8, display_text
 
 
 def build_zones(preset: list[dict], values: dict) -> list[dict]:
@@ -28,7 +28,9 @@ def build_zones(preset: list[dict], values: dict) -> list[dict]:
             if text is not None:
                 zone["text"] = text
         if isinstance(zone.get("text"), str):
-            zone["text"] = clip_utf8(zone["text"], 95)
+            zone["text"] = clip_utf8(display_text(zone["text"]), 95)
+        if isinstance(zone.get("format"), str):
+            zone["format"] = clip_utf8(display_text(zone["format"]), 15)
         # clock/media/spacer carry no host-side data.
 
         zones.append(zone)

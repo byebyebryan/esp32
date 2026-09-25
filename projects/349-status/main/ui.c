@@ -13,10 +13,14 @@
 #include "rtc.h"
 #include "state.h"
 
+#if !LV_FONT_SOURCE_HAN_SANS_SC_14_CJK || !LV_FONT_SOURCE_HAN_SANS_SC_16_CJK
+#error "349-status requires the Source Han 14/16 CJK fonts; enable them in sdkconfig"
+#endif
+
 #define BAR_HEIGHT 46
-#define ZONE_FONT  (&lv_font_montserrat_16)
-#define BODY_FONT  (&lv_font_montserrat_14)
-#define SMALL_FONT (&lv_font_montserrat_12)
+#define ZONE_FONT  (&s_zone_font)
+#define BODY_FONT  (&s_body_font)
+#define SMALL_FONT (&s_small_font)
 #define OVERLAY_FONT (&lv_font_montserrat_28)
 #define TEXT_COLOR 0xE6E6E6
 #define MUTED_COLOR 0x9FB3C8
@@ -38,6 +42,23 @@ static lv_obj_t *s_media_label;
 static lv_obj_t *s_media_bar;
 
 static int s_last_second = -1;
+static lv_font_t s_zone_font;
+static lv_font_t s_body_font;
+static lv_font_t s_small_font;
+
+static void ui_init_fonts(void)
+{
+    /* Keep Montserrat for the common glyphs and use the bundled Source Han
+     * subset for CJK text in bars and cards. Unknown glyphs use LVGL's
+     * visible placeholder. Copy the descriptors rather than mutating LVGL's
+     * shared const fonts. */
+    s_zone_font = lv_font_montserrat_16;
+    s_zone_font.fallback = &lv_font_source_han_sans_sc_16_cjk;
+    s_body_font = lv_font_montserrat_14;
+    s_body_font.fallback = &lv_font_source_han_sans_sc_14_cjk;
+    s_small_font = lv_font_montserrat_12;
+    s_small_font.fallback = &lv_font_source_han_sans_sc_14_cjk;
+}
 
 static lv_text_align_t text_align(const char *align)
 {
@@ -255,7 +276,7 @@ static void make_card(lv_obj_t *parent, const status_notif_t *notif)
 {
     lv_obj_t *card = lv_obj_create(parent);
     lv_obj_remove_style_all(card);
-    lv_obj_set_size(card, LV_PCT(100), 44);
+    lv_obj_set_size(card, LV_PCT(100), 46);
     lv_obj_set_style_bg_color(card, lv_color_hex(CARD_BG), 0);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(card, 4, 0);
@@ -287,7 +308,7 @@ static void make_card(lv_obj_t *parent, const status_notif_t *notif)
     lv_obj_remove_style_all(top);
     lv_obj_remove_flag(top, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_width(top, LV_PCT(100));
-    lv_obj_set_height(top, 18);
+    lv_obj_set_height(top, 20);
     lv_obj_set_flex_flow(top, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(top, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(top, 6, 0);
@@ -312,7 +333,7 @@ static void make_card(lv_obj_t *parent, const status_notif_t *notif)
     lv_obj_set_style_text_color(body, lv_color_hex(MUTED_COLOR), 0);
     lv_label_set_long_mode(body, LV_LABEL_LONG_DOT);
     lv_obj_set_width(body, LV_PCT(100));
-    lv_obj_set_height(body, 16);
+    lv_obj_set_height(body, 17);
 }
 
 static void ui_build_cards(void)
@@ -408,6 +429,7 @@ static void ui_tick_cb(lv_timer_t *timer)
 
 void ui_init(void)
 {
+    ui_init_fonts();
     lv_obj_t *scr = lv_screen_active();
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x0A0E14), LV_PART_MAIN);
     lv_obj_set_style_pad_all(scr, 0, 0);

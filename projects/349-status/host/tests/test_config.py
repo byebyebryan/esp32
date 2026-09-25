@@ -52,6 +52,8 @@ def test_unknown_key_rejected(tmp_path):
         ("[notifications]\nmax_visible = 9\n", "max_visible"),
         ("[bar]\npreset = [" + ",".join("{ id = 'z%d', kind = 'text', w = 1 }" % i for i in range(9)) + "]\n", "zones"),
         ("[bar]\npreset = [{ id = 'wide', kind = 'text', w = 641 }]\n", "w must"),
+        ("[bar]\npreset = [{ id = 'a', kind = 'text', w = 310 }, { id = 'b', kind = 'text', w = 310 }]\n", "including gaps"),
+        ("[bar]\npreset = [{ id = 'spacer', kind = 'spacer', w = 10 }]\n", "flex spacer"),
         ("[bar]\npreset = [{ id = 'long', kind = 'text', w = 20, text = '" + "x" * 96 + "' }]\n", "text"),
         ("[daemon]\ntick_s = 0.2\nsync_interval_s = 0.1\n", "at least"),
         ("[notifications]\nmode = 'consume'\n", "mode"),
