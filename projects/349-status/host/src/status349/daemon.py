@@ -34,6 +34,7 @@ log = logging.getLogger("349d")
 BAUDRATE = 115200
 PING_INTERVAL_S = 4.0
 PORT_SCAN_INTERVAL_S = 0.5
+CARD_STATUS_TIMEOUT_S = 2.0
 
 
 class Daemon:
@@ -47,13 +48,20 @@ class Daemon:
         if port_override is not None:
             self.cfg.link.port = port_override
         self.stop = stop
-        self.model = StateModel(max_visible=cfg.notifications.max_visible)
+        self.model = StateModel(max_visible=cfg.notifications.max_visible, cache_limit=cfg.notifications.cache_limit)
         self.clock = ClockSource()
         self.sysinfo = SysinfoSource()
         self.volume = VolumeSource()
         self.power = PowerSource()
         self.notifications = NotificationSource(cfg.notifications, self._device_notify, self._device_close)
         self._writer: asyncio.StreamWriter | None = None
+        self._state_lock = asyncio.Lock()
+        self._wire_lock = asyncio.Lock()
+        self._card_sync_capacity: int | None = None
+        self._sync_tx = 0
+        self._device_boot_id: int | None = None
+        self._cards_query_lock = asyncio.Lock()
+        self._cards_status_waiter: asyncio.Future[dict] | None = None
         self._devlog: deque[str] = deque(maxlen=200)
         self._last_rx_mono: float | None = None
         self._needs_sync = False
@@ -93,16 +101,35 @@ class Daemon:
             await self._ipc.stop()
 
     async def _device_notify(self, message: dict) -> None:
-        self.model.add_notification(message)
-        # A live replacement must reach the device even when the payload is
-        # unchanged: it unhides a card that was dismissed locally.
-        await self.send(message)
+        async with self._state_lock:
+            self.model.add_notification(message)
+            # A live replacement must reach the device even when the payload
+            # is unchanged: it unhides a card that was dismissed locally.
+            update = dict(message)
+            update["total"] = len(self.model.notifs)
+            if self._card_sync_capacity is not None:
+                update["cached"] = int(message["id"]) in self.model.cached_notification_ids(
+                    self._card_sync_capacity
+                )
+            await self.send(update)
 
     async def _device_close(self, local_id: int) -> None:
-        if self.model.close_notification(local_id):
-            await self.send(proto.close(local_id))
+        async with self._state_lock:
+            cached_ids = self.model.cached_notification_ids(self._card_sync_capacity)
+            overflowed = len(self.model.notifs) > len(cached_ids)
+            if self.model.close_notification(local_id):
+                await self.send(proto.close(local_id, total=len(self.model.notifs)))
+                if self._card_sync_capacity is not None and overflowed and local_id in cached_ids:
+                    # Closing a cached card exposes a vacancy when older active
+                    # cards were omitted. The tick loop coalesces close bursts.
+                    self._needs_sync = True
+                    self._tick_wakeup.set()
 
     async def send(self, message: dict) -> bool:
+        async with self._wire_lock:
+            return await self._write_message(message)
+
+    async def _write_message(self, message: dict) -> bool:
         if self._writer is None:
             return False
         try:
@@ -126,10 +153,27 @@ class Daemon:
         return values
 
     async def _send_sync(self) -> None:
+        async with self._state_lock:
+            self._needs_sync = False
+            await self._send_sync_locked()
+
+    async def _send_sync_locked(self) -> None:
         epoch, offset = self.clock.read()
         self.model.set_clock(epoch, offset)
         self.model.set_zones(build_zones(self.cfg.bar.preset, self._sample()))
-        await self.send(self.model.snapshot())
+        if self._card_sync_capacity is None:
+            messages = [self.model.snapshot()]
+        else:
+            self._sync_tx += 1
+            snapshot = self.model.card_snapshot(self._card_sync_capacity)
+            messages = proto.card_sync_messages(snapshot, self._sync_tx)
+
+        # Hold the wire lock across the full transaction, including begin and
+        # commit, so pings and IPC output cannot split its staging sequence.
+        async with self._wire_lock:
+            for message in messages:
+                if not await self._write_message(message):
+                    break
 
     async def _link_loop(self) -> None:
         min_backoff = max(0.05, float(self.cfg.link.reconnect_min_s))
@@ -166,7 +210,11 @@ class Daemon:
 
             log.info("link up on %s", path)
             backoff = min_backoff
-            self._writer = writer
+            async with self._state_lock:
+                self._writer = writer
+                self._card_sync_capacity = None
+                self._sync_tx = 0
+                self._device_boot_id = None
             # Opening the port resets the chip, but the kernel's DTR/RTS raise
             # can land it in download mode; force a normal boot, then the
             # device announces itself.
@@ -221,6 +269,9 @@ class Daemon:
 
         kind = message.get("t")
         if kind == "hello":
+            boot_id = message.get("boot_id")
+            if isinstance(boot_id, bool) or not isinstance(boot_id, int):
+                boot_id = None
             log.info(
                 "device hello: fw=%s build=%s sha=%s proto=%s cap=%s",
                 message.get("fw"),
@@ -229,7 +280,15 @@ class Daemon:
                 message.get("proto"),
                 message.get("cap"),
             )
-            await self._send_sync()
+            async with self._state_lock:
+                self._card_sync_capacity = proto.card_sync_capacity(message)
+                if boot_id is not None and boot_id == self._device_boot_id:
+                    log.debug("ignoring repeated hello for device boot_id=%s", boot_id)
+                else:
+                    # A missing ID keeps the pre-dedup legacy behavior: every
+                    # hello requests a fresh full sync.
+                    self._device_boot_id = boot_id
+                    await self._send_sync_locked()
         elif kind == "input":
             await self._handle_input(message)
         elif kind == "resync":
@@ -237,6 +296,16 @@ class Daemon:
             await self._send_sync()
         elif kind == "ack":
             log.debug("device ack: %s", message.get("v"))
+        elif kind == "cards_status":
+            status = proto.card_status(message)
+            if status is None:
+                log.warning("malformed cards_status response")
+                return
+            waiter = self._cards_status_waiter
+            if waiter is not None and not waiter.done():
+                waiter.set_result(status)
+            else:
+                log.debug("unsolicited cards_status: %s", status)
         else:
             log.debug("unknown device message: %s", message)
 
@@ -247,6 +316,25 @@ class Daemon:
         else:
             log.info("device input: %s", message)
 
+    async def _query_device_cards(self) -> dict:
+        async with self._cards_query_lock:
+            if self._card_sync_capacity is None:
+                return {"ok": False, "error": "device does not advertise card-sync-v1"}
+
+            waiter: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
+            self._cards_status_waiter = waiter
+            try:
+                if not await self.send({"t": "cards_query"}):
+                    return {"ok": False, "error": "device is disconnected"}
+                try:
+                    status = await asyncio.wait_for(waiter, timeout=CARD_STATUS_TIMEOUT_S)
+                except asyncio.TimeoutError:
+                    return {"ok": False, "error": "timed out waiting for cards_status"}
+                return {"ok": True, "device_cards": status}
+            finally:
+                if self._cards_status_waiter is waiter:
+                    self._cards_status_waiter = None
+
     async def reload(self) -> bool:
         if self.cfg_path is None:
             log.info("no config file to reload")
@@ -256,12 +344,14 @@ class Daemon:
         except Exception as exc:  # noqa: BLE001 - a bad file must not kill the daemon
             log.error("config reload failed: %s", exc)
             return False
-        apply_config(self.cfg, new)
-        if self._port_override is not None:
-            self.cfg.link.port = self._port_override
-        self.model.max_visible = self.cfg.notifications.max_visible
-        self._needs_sync = True
-        self._tick_wakeup.set()
+        async with self._state_lock:
+            apply_config(self.cfg, new)
+            if self._port_override is not None:
+                self.cfg.link.port = self._port_override
+            self.model.max_visible = self.cfg.notifications.max_visible
+            self.model.cache_limit = self.cfg.notifications.cache_limit
+            self._needs_sync = True
+            self._tick_wakeup.set()
         await self.notifications.reconfigure()
         log.info("config reloaded from %s", self.cfg_path)
         return True
@@ -296,6 +386,8 @@ class Daemon:
         cmd = request.get("cmd")
         if cmd == "status":
             return self._status()
+        if cmd == "device_cards":
+            return await self._query_device_cards()
         if cmd == "text":
             await self.send({"t": "text", "v": str(request.get("value", ""))})
             return {"ok": True}
@@ -368,19 +460,19 @@ class Daemon:
                     await self._device_close(nid)
 
             if self._needs_sync:
-                self._needs_sync = False
                 await self._send_sync()
 
             values = self._sample()
 
             epoch, offset = self.clock.read()
-            if offset != last_offset:
-                self.model.set_clock(epoch, offset)
-                await self.send(proto.clock(epoch, offset))
-                last_offset = offset
+            async with self._state_lock:
+                if offset != last_offset:
+                    self.model.set_clock(epoch, offset)
+                    await self.send(proto.clock(epoch, offset))
+                    last_offset = offset
 
-            if self.model.set_zones(build_zones(self.cfg.bar.preset, values)):
-                await self.send(proto.bar(self.model.zones, self.model.rev))
+                if self.model.set_zones(build_zones(self.cfg.bar.preset, values)):
+                    await self.send(proto.bar(self.model.zones, self.model.rev))
 
             if time.monotonic() >= next_sync:
                 await self._send_sync()

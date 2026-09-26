@@ -10,6 +10,7 @@ def test_defaults():
     assert cfg.daemon.sync_interval_s == 60.0
     assert cfg.notifications.mode == "mirror"
     assert cfg.notifications.device_dismiss == "local"
+    assert cfg.notifications.cache_limit == 32
     assert cfg.notifications.ignore_apps
     assert cfg.notifications.popup_timeout_ms == 5000
     assert cfg.notifications.critical_popup_timeout_ms == 0
@@ -33,7 +34,16 @@ def test_toml_overlay(tmp_path):
     assert cfg.daemon.tick_s == 0.25
     assert cfg.notifications.max_visible == 5
     assert cfg.notifications.popup_timeout_ms == 4000
+    assert cfg.notifications.cache_limit == 32
     assert cfg.notifications.device_dismiss == "local"
+
+
+def test_cache_limit_can_disable_device_cards_or_reduce_capacity(tmp_path):
+    path = tmp_path / "349d.toml"
+    path.write_text("[notifications]\ncache_limit = 0\n")
+    assert load_config(str(path)).notifications.cache_limit == 0
+    path.write_text("[notifications]\ncache_limit = 20\n")
+    assert load_config(str(path)).notifications.cache_limit == 20
 
 
 def test_custom_preset(tmp_path):
@@ -54,6 +64,8 @@ def test_unknown_key_rejected(tmp_path):
     "config_text, message",
     [
         ("[notifications]\nmax_visible = 9\n", "max_visible"),
+        ("[notifications]\ncache_limit = 33\n", "cache_limit"),
+        ("[notifications]\ncache_limit = true\n", "cache_limit"),
         ("[notifications]\npopup_timeout_ms = -1\n", "popup_timeout_ms"),
         ("[notifications]\ncritical_popup_timeout_ms = true\n", "critical_popup_timeout_ms"),
         ("[bar]\npreset = [" + ",".join("{ id = 'z%d', kind = 'text', w = 1 }" % i for i in range(9)) + "]\n", "zones"),

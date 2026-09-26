@@ -100,7 +100,7 @@ def test_injected_notification_expires_and_sends_close():
                     break
                 await asyncio.sleep(0.02)
             assert nid not in daemon.model.notifs
-            assert {"t": "close", "id": nid} in sent
+            assert any(message.get("t") == "close" and message.get("id") == nid for message in sent)
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)

@@ -20,6 +20,7 @@ BAR_ZONE_GAP = 8
 BAR_DEFAULT_ZONE_WIDTH = 60
 DEVICE_MAX_ZONES = 8
 DEVICE_MAX_NOTIFS = 8
+DEVICE_MAX_CACHE_CARDS = 32
 ZONE_ID_BYTES = 15
 ZONE_KIND_BYTES = 11
 ZONE_TEXT_BYTES = 95
@@ -71,6 +72,9 @@ class NotificationsConfig:
     device_dismiss: str = "local"  # local | propagate
     ignore_apps: list[str] = field(default_factory=lambda: list(DEFAULT_IGNORE_APPS))
     max_visible: int = 3
+    # Zero disables device card caching while preserving the host's active set
+    # and its overflow count. max_visible remains the legacy-protocol limit.
+    cache_limit: int = DEVICE_MAX_CACHE_CARDS
     popup_timeout_ms: int = 5000  # fallback when Notify requests server default (-1)
     critical_popup_timeout_ms: int = 0  # 0 keeps critical cards until close
 
@@ -218,6 +222,22 @@ def _validate_sync_size(preset: list[dict]) -> None:
     except ValueError as exc:
         raise ValueError(f"bar preset makes a sync exceed the {proto.LINE_MAX}-byte device line limit") from exc
 
+    sync_begin = {
+        "t": "sync_begin",
+        "tx": 9223372036854775807,
+        "rev": 9223372036854775807,
+        "bar": {"t": "bar", "rev": 9223372036854775807, "zones": zones},
+        "clock": {"epoch": 9223372036854775807, "offset": -2147483648},
+        "media": None,
+        "limit": DEVICE_MAX_CACHE_CARDS,
+        "count": DEVICE_MAX_CACHE_CARDS,
+        "overflow": 9223372036854775807,
+    }
+    try:
+        proto.encode(sync_begin)
+    except ValueError as exc:
+        raise ValueError(f"bar preset makes a sync_begin exceed the {proto.LINE_MAX}-byte device line limit") from exc
+
 
 def validate_config(cfg: Config) -> None:
     """Validate host settings against the fixed v1 device protocol limits."""
@@ -255,6 +275,12 @@ def validate_config(cfg: Config) -> None:
         or not 0 <= cfg.notifications.max_visible <= DEVICE_MAX_NOTIFS
     ):
         raise ValueError(f"notifications.max_visible must be an integer from 0 to {DEVICE_MAX_NOTIFS}")
+    if (
+        isinstance(cfg.notifications.cache_limit, bool)
+        or not isinstance(cfg.notifications.cache_limit, int)
+        or not 0 <= cfg.notifications.cache_limit <= DEVICE_MAX_CACHE_CARDS
+    ):
+        raise ValueError(f"notifications.cache_limit must be an integer from 0 to {DEVICE_MAX_CACHE_CARDS}")
     for field_name in ("popup_timeout_ms", "critical_popup_timeout_ms"):
         timeout = getattr(cfg.notifications, field_name)
         if isinstance(timeout, bool) or not isinstance(timeout, int) or not 0 <= timeout <= 86_400_000:

@@ -1,3 +1,5 @@
+import pytest
+
 from status349 import proto
 from status349.state import StateModel
 
@@ -81,3 +83,59 @@ def test_notifications_capped_to_zero():
     snapshot = model.snapshot()
     assert snapshot["notifs"] == []
     assert snapshot["notifs_overflow"] == 1
+
+
+@pytest.mark.parametrize(
+    ("active", "expected_ids", "overflow"),
+    [
+        (0, [], 0),
+        (1, [0], 0),
+        (20, list(range(20)), 0),
+        (32, list(range(32)), 0),
+        (35, list(range(3, 35)), 3),
+    ],
+)
+def test_card_snapshot_selects_newest_cache_and_reports_overflow(active, expected_ids, overflow):
+    model = StateModel(cache_limit=32)
+    for nid in range(active):
+        model.add_notification({"t": "notify", "id": nid})
+
+    snapshot = model.card_snapshot(device_capacity=32)
+
+    assert [message["id"] for message in snapshot["notifs"]] == expected_ids
+    assert snapshot["limit"] == 32
+    assert snapshot["overflow"] == overflow
+
+
+def test_card_snapshot_respects_smaller_device_capacity_and_zero_host_limit():
+    model = StateModel(cache_limit=20)
+    for nid in range(25):
+        model.add_notification({"t": "notify", "id": nid})
+    limited = model.card_snapshot(4)
+    assert [message["id"] for message in limited["notifs"]] == [21, 22, 23, 24]
+    assert limited["limit"] == 4
+
+    model.cache_limit = 0
+    snapshot = model.card_snapshot(32)
+    assert snapshot["notifs"] == []
+    assert snapshot["limit"] == 0
+    assert snapshot["overflow"] == 25
+
+
+@pytest.mark.parametrize(
+    ("cache_limit", "active", "expected_ids", "overflow"),
+    [
+        (0, 3, [], 3),
+        (8, 12, list(range(4, 12)), 4),
+    ],
+)
+def test_card_snapshot_exposes_configured_limit(cache_limit, active, expected_ids, overflow):
+    model = StateModel(cache_limit=cache_limit)
+    for nid in range(active):
+        model.add_notification({"t": "notify", "id": nid})
+
+    snapshot = model.card_snapshot(device_capacity=32)
+
+    assert snapshot["limit"] == cache_limit
+    assert [message["id"] for message in snapshot["notifs"]] == expected_ids
+    assert snapshot["overflow"] == overflow

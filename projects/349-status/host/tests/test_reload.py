@@ -26,7 +26,7 @@ def test_reload_changes_notification_mode_and_preserves_cli_port(tmp_path):
     cfg_path = tmp_path / "349d.toml"
     cfg_path.write_text(
         "[link]\nport = '/from/config'\n\n"
-        "[notifications]\nmode = 'mirror'\nmax_visible = 3\n\n"
+        "[notifications]\nmode = 'mirror'\nmax_visible = 3\ncache_limit = 8\n\n"
         "[daemon]\ntick_s = 0.05\nsync_interval_s = 0.5\n"
     )
     cfg = load_config(str(cfg_path))
@@ -39,7 +39,7 @@ def test_reload_changes_notification_mode_and_preserves_cli_port(tmp_path):
 
         async def capture(message):
             sent.append(message)
-            if message == {"t": "close", "id": 1}:
+            if message.get("t") == "close" and message.get("id") == 1:
                 close_started.set()
                 await finish_close.wait()
             return True
@@ -56,7 +56,7 @@ def test_reload_changes_notification_mode_and_preserves_cli_port(tmp_path):
 
         cfg_path.write_text(
             "[link]\nport = '/replacement-from-config'\n\n"
-            "[notifications]\nmode = 'off'\nmax_visible = 2\n\n"
+            "[notifications]\nmode = 'off'\nmax_visible = 2\ncache_limit = 4\n\n"
             "[daemon]\ntick_s = 0.2\nsync_interval_s = 0.8\n\n"
             "[bar]\npreset = [{ id = 'greet', kind = 'text', w = 80, text = 'hi' }]\n"
         )
@@ -81,6 +81,7 @@ def test_reload_changes_notification_mode_and_preserves_cli_port(tmp_path):
 
         assert daemon.cfg.link.port == "/from/cli"
         assert daemon.model.max_visible == 2
+        assert daemon.model.cache_limit == 4
         assert set(daemon.model.notifs) == {100000}
         assert {message["id"] for message in sent if message["t"] == "close"} == {1}
         assert daemon.notifications._process_task is None
@@ -107,6 +108,7 @@ def test_reload_changes_notification_mode_and_preserves_cli_port(tmp_path):
         assert await daemon.reload()
         assert daemon.notifications._process_task is not None
         assert daemon.cfg.link.port == "/from/cli"
+        assert daemon.model.cache_limit == 32
         await daemon.notifications.stop()
 
     asyncio.run(scenario())
@@ -148,7 +150,7 @@ def test_tick_and_sync_intervals_take_effect_after_reload(tmp_path):
             sync_times.append(time.monotonic())
 
         daemon._sample = sample
-        daemon._send_sync = send_sync
+        daemon._send_sync_locked = send_sync
         tick_task = asyncio.create_task(daemon._tick_loop())
         try:
             await _wait_for(lambda: len(sample_times) >= 3)

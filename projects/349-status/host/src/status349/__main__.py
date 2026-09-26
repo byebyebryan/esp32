@@ -17,7 +17,7 @@ from . import ipc
 from .link import Link, LinkError, open_port
 from .proto import classify
 
-SOCKET_COMMANDS = {"status", "text", "notify", "pause", "resume", "reload", "log"}
+SOCKET_COMMANDS = {"status", "device-cards", "text", "notify", "pause", "resume", "reload", "log"}
 DIRECT_COMMANDS = {"hello", "ping", "text", "listen"}
 
 
@@ -61,6 +61,8 @@ def ipc_request(request: dict, path: Path | None = None) -> dict:
 
 
 def request_for(args: argparse.Namespace) -> dict:
+    if args.command == "device-cards":
+        return {"cmd": "device_cards"}
     if args.command == "text":
         return {"cmd": "text", "value": args.value}
     if args.command == "notify":
@@ -109,6 +111,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=float, default=2.0, help="reply timeout for --port")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("status", help="daemon and link status")
+    sub.add_parser("device-cards", help="read cached card IDs from the device")
     text = sub.add_parser("text", help="send a text message")
     text.add_argument("value")
     notify = sub.add_parser("notify", help="show a test notification")
@@ -148,6 +151,8 @@ def main(argv: list[str] | None = None) -> int:
         for key, value in response.items():
             if key != "ok":
                 print(f"{key}: {value}")
+    elif args.command == "device-cards":
+        print(json.dumps(response.get("device_cards", {})))
     elif args.command == "log":
         for line in response.get("lines", []):
             print(line)

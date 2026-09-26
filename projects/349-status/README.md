@@ -57,6 +57,7 @@ with `systemctl --user show-environment`).
 
 ```
 349ctl status                 daemon/link state, revision, notification count
+349ctl device-cards           device cache count, ordered IDs, and overflow
 349ctl text "hello"           send a text message to the device
 349ctl notify "summary" [body]  inject a test notification
 349ctl pause | resume         release/reconnect the serial port
@@ -82,7 +83,8 @@ sync_interval_s = 60.0
 [notifications]
 mode = "mirror"            # mirror | off (consume is not implemented)
 device_dismiss = "local"   # local | propagate
-max_visible = 3
+max_visible = 3                 # legacy firmware snapshot cap
+cache_limit = 32                # active cards cached by capable firmware
 popup_timeout_ms = 5000           # fallback when an app requests server default (-1)
 critical_popup_timeout_ms = 0     # 0 keeps critical cards until closed
 ignore_apps = ["KeePassXC", "Bitwarden", "1Password"]
@@ -99,9 +101,12 @@ preset = [
 ]
 ```
 
-`max_visible` is limited to 0–8, and the bar preset can contain at most eight
-zones. The configured widths must fit the 624 px content area including 8 px
-gaps; a nonspacer with `w = 0` uses 60 px and a spacer uses flex space.
+`max_visible` is limited to 0–8 for older firmware. `cache_limit` is limited
+to 0–32 for firmware advertising `card-sync-v1`; its default is 32. A value
+of zero keeps no cards on the device while still reporting their active count.
+The bar preset can contain at most eight zones. The configured widths must
+fit the 624 px content area including 8 px gaps; a nonspacer with `w = 0`
+uses 60 px and a spacer uses flex space.
 Invalid configuration is rejected rather than silently dropping zones or
 sending a frame the device cannot accept. Reload after editing with
 `349ctl reload` (or `systemctl --user reload 349d`).
@@ -122,6 +127,16 @@ critical cards use `critical_popup_timeout_ms`; an app timeout of `0` keeps
 the card until explicit close. A timeout hides only the board card: the
 desktop notification daemon keeps its notification-center history.
 Desktop close and replacement still update the board immediately.
+
+Capable firmware keeps up to the newest 32 active cards locally for the planned
+side-peek deck. The host remains responsible for expiry and retains any cards
+beyond the device cache. A chunked full sync restores the cache after a
+reconnect; new cards, replacements, and closes remain incremental. An overflow
+count describes active cards that are not cached and cannot yet be browsed.
+See the [cache implementation plan](design/card-cache-plan.md). The current
+two-card display layout remains until the UI redesign is implemented. Use
+`349ctl device-cards` to read the device's ordered cached IDs and overflow
+count without resetting the USB link.
 
 The daemon sends a ping every four seconds even when the bar does not change.
 While the board stays powered, it shows `host asleep` when USB activity stops

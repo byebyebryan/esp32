@@ -1,7 +1,7 @@
 """Host-side state model: what the device should be showing right now.
 
-Every change bumps `rev`; `snapshot()` produces a full `sync` message so a
-reconnecting or rebooted device can be brought up to date in one message.
+Every change bumps `rev`; `snapshot()` produces the bounded legacy `sync`,
+while `card_snapshot()` preserves the newest active cards for chunked sync.
 """
 
 from __future__ import annotations
@@ -10,8 +10,9 @@ from . import proto
 
 
 class StateModel:
-    def __init__(self, max_visible: int = 3) -> None:
+    def __init__(self, max_visible: int = 3, cache_limit: int = 32) -> None:
         self.max_visible = max(0, int(max_visible))
+        self.cache_limit = max(0, min(32, int(cache_limit)))
         self.rev = 0
         self.clock: dict | None = None
         self.media: dict | None = None
@@ -52,6 +53,40 @@ class StateModel:
         if not fits():
             raise ValueError("sync message exceeds the device line limit after notification trimming")
         return snapshot
+
+    def card_snapshot(self, device_capacity: int | None = None) -> dict:
+        """Return full metadata and the newest cards within the device cache."""
+        capacity = self.cache_limit
+        if device_capacity is not None:
+            capacity = min(capacity, max(0, int(device_capacity)))
+
+        all_notifs = list(self.notifs.values())
+        if capacity:
+            notifs = all_notifs[-capacity:]
+        else:
+            notifs = []
+
+        return {
+            "rev": self.rev,
+            "bar": proto.bar(self.zones, self.rev),
+            "clock": self.clock,
+            "media": self.media,
+            "notifs": notifs,
+            "limit": capacity,
+            "overflow": len(all_notifs) - len(notifs),
+        }
+
+    def cached_notification_ids(self, device_capacity: int | None = None) -> set[int]:
+        """Return IDs selected by ``card_snapshot`` without building its envelope."""
+        capacity = self.cache_limit
+        if device_capacity is not None:
+            capacity = min(capacity, max(0, int(device_capacity)))
+        notifs = list(self.notifs.values())
+        if capacity:
+            notifs = notifs[-capacity:]
+        else:
+            notifs = []
+        return {int(message["id"]) for message in notifs}
 
     def set_clock(self, epoch: int, offset: int) -> bool:
         if self.clock is not None and self.clock["epoch"] == int(epoch) and self.clock["offset"] == int(offset):

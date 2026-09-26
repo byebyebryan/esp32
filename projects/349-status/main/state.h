@@ -10,7 +10,8 @@
 #define STATUS_ZONE_KIND_MAX    12
 #define STATUS_ZONE_TEXT_MAX    96
 #define STATUS_ZONE_FORMAT_MAX  16
-#define STATUS_MAX_NOTIFS       8
+#define STATUS_LEGACY_NOTIFS    8
+#define STATUS_MAX_NOTIFS       32
 #define STATUS_NOTIF_APP_MAX    32
 #define STATUS_NOTIF_SUMMARY_MAX 64
 #define STATUS_NOTIF_BODY_MAX   160
@@ -60,7 +61,9 @@ typedef struct {
     int zone_count;
     status_clock_t clock;
     status_media_t media;
-    status_notif_t notifs[STATUS_MAX_NOTIFS];
+    status_notif_t *notifs;
+    int notif_capacity;
+    int cache_limit;
     int notif_count;
     int notif_overflow;
     int hidden_ids[STATUS_MAX_NOTIFS];
@@ -91,8 +94,20 @@ void state_apply_bar(const cJSON *obj);
 bool state_apply_clock(const cJSON *obj, int64_t *epoch, int *offset);
 void state_apply_media(const cJSON *obj);
 void state_apply_notify(const cJSON *obj);
-void state_apply_close(int id);
+void state_apply_close(int id, int total);
 void state_apply_sync(const cJSON *obj);
+
+/* Chunked full sync is available only when both PSRAM card buffers exist. */
+int state_card_sync_capacity(void);
+bool state_sync_begin(const cJSON *obj);
+bool state_sync_cards(const cJSON *obj);
+bool state_sync_commit(const cJSON *obj, int64_t *epoch, int *offset, bool *has_clock);
+void state_sync_abort(void);
+bool state_sync_pending(void);
+bool state_sync_timeout(void);
+
+/* Read-only acceptance diagnostics; IDs remain in cache order, oldest first. */
+void state_cards_status(int *ids, int *count, int *overflow, int *capacity);
 
 /* Locally hidden after a device dismiss; unhidden by a replace. */
 void state_hide_notif(int id);

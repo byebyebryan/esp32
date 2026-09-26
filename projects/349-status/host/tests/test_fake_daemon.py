@@ -85,7 +85,7 @@ def test_unchanged_live_replacement_still_reaches_device():
         message = {"t": "notify", "id": 1, "summary": "same"}
         await daemon._device_notify(message)
         await daemon._device_notify(message)
-        assert sent == [message, message]
+        assert sent == [{**message, "total": 1}, {**message, "total": 1}]
         assert daemon.model.rev == 1
 
     asyncio.run(scenario())

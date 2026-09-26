@@ -10,6 +10,7 @@
 #include <stdint.h>
 
 #include "display_349.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -92,14 +93,16 @@ void app_main(void)
         uint32_t core0_idle_percent;
         uint32_t core1_idle_percent;
         const char *host = link_host_connected() ? "yes" : "no";
+        const size_t min_internal = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
+        const size_t min_psram = heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM);
         if (sample_cpu_idle(&core0_idle_percent, &core1_idle_percent)) {
             ESP_LOGI(TAG,
-                     "alive, host=%s, cpu_idle_core0_pct=%u, cpu_idle_core1_pct=%u",
-                     host, core0_idle_percent, core1_idle_percent);
+                     "alive, host=%s, cpu_idle_core0_pct=%u, cpu_idle_core1_pct=%u, min_internal=%zu, min_psram=%zu",
+                     host, core0_idle_percent, core1_idle_percent, min_internal, min_psram);
         } else {
             ESP_LOGI(TAG,
-                     "alive, host=%s, cpu_idle_core0_pct=na, cpu_idle_core1_pct=na",
-                     host);
+                     "alive, host=%s, cpu_idle_core0_pct=na, cpu_idle_core1_pct=na, min_internal=%zu, min_psram=%zu",
+                     host, min_internal, min_psram);
         }
     }
 }

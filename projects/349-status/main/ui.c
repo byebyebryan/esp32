@@ -348,13 +348,14 @@ static void make_card(lv_obj_t *parent, const status_notif_t *notif)
 
 static void ui_build_cards(void)
 {
-    status_notif_t visible[STATUS_MAX_NOTIFS];
+    status_notif_t visible[MAX_CARDS];
     int visible_count = 0;
+    int copied = 0;
     int overflow = 0;
 
     state_lock();
     const status_state_t *st = state_get();
-    for (int i = 0; i < st->notif_count; i++) {
+    for (int i = st->notif_count - 1; i >= 0; i--) {
         bool hidden = false;
         for (int h = 0; h < st->hidden_count; h++) {
             if (st->hidden_ids[h] == st->notifs[i].id) {
@@ -363,7 +364,10 @@ static void ui_build_cards(void)
             }
         }
         if (!hidden) {
-            visible[visible_count++] = st->notifs[i];
+            visible_count++;
+            if (copied < MAX_CARDS) {
+                visible[copied++] = st->notifs[i];
+            }
         }
     }
     overflow = st->notif_overflow;
@@ -371,12 +375,11 @@ static void ui_build_cards(void)
 
     lv_obj_clean(s_notif_area);
 
-    int shown = 0;
-    for (int i = visible_count - 1; i >= 0 && shown < MAX_CARDS; i--, shown++) {
+    for (int i = 0; i < copied; i++) {
         make_card(s_notif_area, &visible[i]);
     }
 
-    const int more = (visible_count - shown) + overflow;
+    const int more = (visible_count - copied) + overflow;
     if (more > 0) {
         lv_obj_t *label = lv_label_create(s_notif_area);
         lv_label_set_text_fmt(label, "+%d more", more);
