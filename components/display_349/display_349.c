@@ -27,6 +27,7 @@
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_vendor.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -45,6 +46,8 @@ static const char *TAG = "display349";
 #define LVGL_TASK_MIN_DELAY_MS 5
 #define LVGL_TASK_STACK_SIZE   (8 * 1024)
 #define LVGL_TASK_PRIORITY     2
+#define PANEL_TRANSFERS_IN_FLIGHT 2
+#define DMA_WAIT_TIMEOUT_MS 2000
 
 /* Dirty areas above this many pixels rebuild the whole shadow instead of
  * transposing the rectangle (the strided rectangle transpose loses to the
@@ -88,6 +91,14 @@ static bool mcp_done_cb(async_memcpy_handle_t mcp, async_memcpy_event_t *event, 
     BaseType_t high_task_woken = pdFALSE;
     xSemaphoreGiveFromISR(s_mcp_done, &high_task_woken);
     return high_task_woken == pdTRUE;
+}
+
+static void wait_for_dma(SemaphoreHandle_t done, const char *operation)
+{
+    if (xSemaphoreTake(done, pdMS_TO_TICKS(DMA_WAIT_TIMEOUT_MS)) != pdTRUE) {
+        ESP_LOGE(TAG, "%s completion timed out after %d ms; restarting", operation, DMA_WAIT_TIMEOUT_MS);
+        esp_restart();
+    }
 }
 
 /*
@@ -155,18 +166,20 @@ static void lcd_send_shadow(esp_lcd_panel_handle_t panel)
     const int rows_per_chunk = BOARD_349_NATIVE_H / flush_count;
 
     for (int c = 0; c < flush_count; c++) {
-        if (c >= 2) {
-            xSemaphoreTake(s_flush_done, portMAX_DELAY);
+        if (c >= PANEL_TRANSFERS_IN_FLIGHT) {
+            wait_for_dma(s_flush_done, "panel transfer");
         }
 
         uint16_t *chunk = s_trans_buf[c & 1];
         ESP_ERROR_CHECK(esp_async_memcpy(s_mcp, chunk, s_shadow + (size_t)c * rows_per_chunk * BOARD_349_NATIVE_W,
                                          DMA_BUFF_LEN, mcp_done_cb, NULL));
-        xSemaphoreTake(s_mcp_done, portMAX_DELAY);
-        esp_lcd_panel_draw_bitmap(panel, 0, c * rows_per_chunk, BOARD_349_NATIVE_W, (c + 1) * rows_per_chunk, chunk);
+        wait_for_dma(s_mcp_done, "async memcpy");
+        ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel, 0, c * rows_per_chunk, BOARD_349_NATIVE_W,
+                                                  (c + 1) * rows_per_chunk, chunk));
     }
-    xSemaphoreTake(s_flush_done, portMAX_DELAY);
-    xSemaphoreTake(s_flush_done, portMAX_DELAY);
+    for (int i = 0; i < PANEL_TRANSFERS_IN_FLIGHT; i++) {
+        wait_for_dma(s_flush_done, "panel transfer");
+    }
 }
 
 static void lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *color_p)
@@ -241,7 +254,9 @@ esp_err_t display_349_init(void)
     ESP_RETURN_ON_ERROR(esp_async_memcpy_install(&mcp_cfg, &s_mcp), TAG, "async memcpy");
 
     s_mcp_done = xSemaphoreCreateBinary();
-    s_flush_done = xSemaphoreCreateBinary();
+    /* Two panel transactions can complete before the task waits. A binary
+     * semaphore would collapse those callbacks and deadlock the next frame. */
+    s_flush_done = xSemaphoreCreateCounting(PANEL_TRANSFERS_IN_FLIGHT, 0);
     s_lvgl_mux = xSemaphoreCreateMutex();
     if (s_mcp_done == NULL || s_flush_done == NULL || s_lvgl_mux == NULL) {
         return ESP_ERR_NO_MEM;
