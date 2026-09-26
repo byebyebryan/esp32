@@ -209,6 +209,27 @@ active, and host/device active-card counts returned to zero.
 The current two-card visual layout is unchanged. This gate validates cache
 state and transport behavior; the side-peek UI is the next separate goal.
 
+### Starship cache rollout — 2026-09-25 PDT
+
+The reviewed display fix, cache implementation, and UI design checkpoint were
+committed and pushed through `3062174`. Starship's connected board uses USB
+serial ID `28:84:85:92:C2:20`; its preceding app was backed up under
+`~/.local/share/esp32/backups/starship-c220-pre-cache-2026-09-25/` before flashing.
+The verified new image has SHA-256
+`70a12724246edbc9cd9802497bbf5105270adb14c993fbe5c2d567c2ffaaa4da`;
+the device reports `hello.build=3062174`, `hello.build_sha=b5f30e365`,
+and `card-sync-v1`. The host service restarted at 19:51:13 PDT, resumed,
+and linked with a 32-card device capacity. Its config was unchanged, including
+the ten-second normal popup fallback. The 105 host tests passed before rollout.
+
+A 90-second `STARSHIP CACHE CHECK` card was read back as ID `100000`.
+The user, physically at Starship, confirmed the normal bar and card with
+`東京`, the arrow, and check mark. Device logs showed regular frame flushes,
+93% core 0 idle and 99% core 1 idle in this short window. The test card later
+expired and device readback returned to zero cards and zero overflow. This is rollout
+smoke evidence; the broader cache/recovery gates above were exercised on Snap.
+Further UI visual and touch checks now use Starship's board.
+
 ### Deferred checks and limits
 
 - The 24-hour connected soak was stopped at the user's request because its
