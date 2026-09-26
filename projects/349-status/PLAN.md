@@ -34,6 +34,8 @@ that were exercised.
 | M0–M3, M5 implementation | Present in source; fresh short-gate results are in `ACCEPTANCE.md` |
 | M4 media | Dropped from v1; protocol/rendering hooks remain dormant |
 | V1 acceptance | The first board passed static-bar, touch/notification, and replug checks. Snap's second board has a separate bring-up smoke check in `ACCEPTANCE.md`, not the full short-gate run. The user deferred the optional 24-hour soak after a 252 s attempt; no long-duration stability claim is made. The first installation assumes USB power is removed during host sleep; actual host suspend/wake is unverified. |
+| Active-card cache | Implemented with capability-gated chunked sync, up to 32 cached cards, overflow/refill, and legacy compatibility. Snap cache/recovery checks are recorded in `ACCEPTANCE.md`. |
+| UI redesign | The [working UI brief](design/ui-brief.md) selects a quarter-width left rail, large idle clock/date, and a foreground notification with a side peek. Layout and navigation implementation are next; physical checks now target Starship's board. |
 
 The acceptance run must record which host process and device firmware build
 were used. The device `hello.build` and `hello.build_sha` report its app
@@ -108,6 +110,11 @@ v1 (types in parentheses):
 | d→h | `resync` | `reason` (`rx_overflow\|parse_error`) |
 | d→h | `ack` | `v` (debug echo; not required in v1 flow) |
 
+The active-card cache extension is capability-gated and leaves these v1
+messages available for older hosts and firmware. See
+[the cache plan](design/card-cache-plan.md) for `sync_begin`, `sync_cards`,
+`sync_commit`, and the device readback used for acceptance.
+
 Zone kinds: `text` (label, optional `color`), `progress` (`value` 0..1,
 optional `text`), `clock` (rendered from `clock` + `format`, ticks locally),
 `media` (dormant rendering path retained after M4 was dropped),
@@ -117,8 +124,9 @@ weather, CI, ...); the device never needs to know what they mean.
 
 Rules:
 
-- Host sends `hello` and `ping` after port open, then full `sync` after device
-  `hello`, every 60 s, and on a device `resync` request.
+- Host sends `hello` and `ping` after port open, then a full transfer after
+  device `hello`, every 60 s, and on a device `resync` request. Capable firmware
+  uses chunked card sync; older firmware uses the single legacy `sync`.
 - `notify.urgency` comes from the `hints` dict, not a `Notify` argument;
   `expire` comes from `expire_timeout`. An absent zone `value`/`text` renders
   as unknown (`--`).

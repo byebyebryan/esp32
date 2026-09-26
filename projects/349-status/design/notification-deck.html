@@ -1,0 +1,147 @@
+<section class="deck349">
+  <style>
+    .deck349 { max-width: 760px; color: #e9eef2; font: 14px/1.35 system-ui, sans-serif; }
+    .deck349 * { box-sizing: border-box; }
+    .deck349 h2 { margin: 0 0 6px; font-size: 20px; }
+    .deck349 .intro { color: #a9bbc7; margin: 0 0 18px; }
+    .deck349 .option { margin-bottom: 24px; }
+    .deck349 .option-title { display: flex; gap: 10px; align-items: baseline; margin: 0 0 7px; }
+    .deck349 .option-title strong { font-size: 14px; }
+    .deck349 .option-title span, .deck349 .note { color: #9eb0bc; font-size: 12px; }
+    .deck349 .viewport { max-width: 100%; overflow-x: auto; border-radius: 9px; }
+    .deck349 .screen { width: 640px; height: 172px; display: flex; overflow: hidden; flex: none;
+      border: 1px solid #354456; border-radius: 8px; background: #0a1119; }
+    .deck349 .rail { width: 160px; height: 100%; flex: none; padding: 9px 12px 8px;
+      background: #111d28; border-right: 1px solid #31404d; }
+    .deck349 .clock { font-size: 39px; font-weight: 650; letter-spacing: -2px; line-height: 1; }
+    .deck349 .date { margin-top: 4px; color: #a5b9c7; font-size: 12px; letter-spacing: 1px; }
+    .deck349 .rule { height: 1px; margin: 7px 0 5px; background: #314657; }
+    .deck349 .stat { display: flex; justify-content: space-between; font-size: 13px; line-height: 20px; }
+    .deck349 .stat span { color: #90a6b5; }
+    .deck349 .stat b { font-weight: 650; }
+    .deck349 .stat .good { color: #78d9b7; }
+    .deck349 .rail.idle { padding: 17px 13px; }
+    .deck349 .rail.idle .host { color: #78d9b7; font-size: 11px; font-weight: 750;
+      letter-spacing: 1.3px; margin-bottom: 13px; }
+    .deck349 .rail.idle .stat { font-size: 14px; line-height: 27px; }
+    .deck349 .rail.idle .stat b { font-size: 15px; }
+    .deck349 .content { width: 478px; height: 170px; flex: none; position: relative; }
+    .deck349 .content.idle { padding: 19px 23px; }
+    .deck349 .content.idle .idle-clock { font-size: 84px; font-weight: 650;
+      letter-spacing: -5px; line-height: 1; }
+    .deck349 .content.idle .idle-date { margin-top: 14px; font-size: 20px;
+      font-weight: 600; letter-spacing: 0.4px; color: #c3d3db; }
+    .deck349 .content.idle .idle-state { margin-top: 8px; font-size: 11px;
+      color: #84a499; letter-spacing: 1px; }
+    .deck349 .primary { position: absolute; z-index: 2; background: #17232e;
+      border-left: 3px solid #72d9b7; border-radius: 5px; padding: 11px 14px; overflow: hidden; }
+    .deck349 .primary .header { display: flex; align-items: center; justify-content: space-between; }
+    .deck349 .source { color: #7ce2bd; font-size: 11px; font-weight: 750; letter-spacing: 1.1px; }
+    .deck349 .meta { display: flex; align-items: center; gap: 11px; }
+    .deck349 .count { color: #afc5d0; font-size: 11px; }
+    .deck349 .dismiss { width: 28px; height: 28px; border: 1px solid #496070;
+      border-radius: 5px; display: grid; place-items: center; font-size: 21px;
+      line-height: 1; color: #b8cbd5; }
+    .deck349 .title { margin: 6px 0 5px; font-size: 21px; font-weight: 650;
+      line-height: 1.13; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .deck349 .body { color: #d3dee4; font-size: 17px; line-height: 1.22; }
+    .deck349 .full .primary { inset: 8px; }
+    .deck349 .side .primary { left: 8px; top: 7px; width: 392px; height: 156px; }
+    .deck349 .side .primary .body { max-width: 352px; }
+    .deck349 .side .peek { position: absolute; top: 14px; right: 8px; width: 104px; height: 142px;
+      background: #263b4b; border-left: 3px solid #809bb2; border-radius: 5px; cursor: pointer; }
+    .deck349 .side .peek:focus-visible { outline: 2px solid #b7ead9; outline-offset: 2px; }
+    .deck349 .side .peek::before { content: ""; position: absolute; right: -4px; top: 8px;
+      width: 3px; height: 126px; border-radius: 2px; background: #395365; }
+    .deck349 .side .peek-content { position: absolute; right: 6px; top: 19px; width: 61px;
+      text-align: center; color: #d3e0e6; }
+    .deck349 .side .peek-content .next { font-size: 10px; letter-spacing: 1px; color: #a8c0cd; }
+    .deck349 .side .peek-content .app { font-size: 12px; font-weight: 700; margin-top: 22px; }
+    .deck349 .side .peek-content .arrow { font-size: 28px; line-height: 1; margin-top: 11px; }
+    .deck349 .note { margin: 7px 0 0; }
+  </style>
+  <h2>349 status · adaptive layout</h2>
+  <p class="intro">640 × 172 pixel sketches. The 160 px stats rail stays in place; the clock moves into it when notifications take the right side.</p>
+
+  <div class="option">
+    <div class="option-title"><strong>Idle</strong><span>Large time and date; host readings occupy the left rail.</span></div>
+    <div class="viewport"><div class="screen"><div class="rail idle">
+      <div class="host">SNAP</div>
+      <div class="stat"><span>CPU</span><b>12%</b></div>
+      <div class="stat"><span>MEM</span><b>41%</b></div>
+      <div class="stat"><span>NET</span><b class="good">ONLINE</b></div>
+      <div class="stat"><span>BAT</span><b>79% +</b></div>
+    </div><div class="content idle">
+      <div class="idle-clock">10:42</div>
+      <div class="idle-date">Friday · 25 September</div>
+      <div class="idle-state">NO ACTIVE NOTIFICATIONS</div>
+    </div></div></div>
+    <p class="note">The large clock gives the open area a clear purpose. A normal card makes this clock compact rather than duplicating it.</p>
+  </div>
+
+  <div class="option">
+    <div class="option-title"><strong>One card</strong><span>Full right region; more room for the message.</span></div>
+    <div class="viewport"><div class="screen"><div class="rail">
+      <div class="clock">10:42</div><div class="date">FRI 25 SEP</div><div class="rule"></div>
+      <div class="stat"><span>CPU</span><b>12%</b></div>
+      <div class="stat"><span>MEM</span><b>41%</b></div>
+      <div class="stat"><span>NET</span><b class="good">ONLINE</b></div>
+      <div class="stat"><span>BAT</span><b>79% +</b></div>
+    </div><div class="content full"><div class="primary">
+      <div class="header"><span class="source">CODEX</span><span class="meta"><span class="count">now</span><span class="dismiss">×</span></span></div>
+      <div class="title">Task completed</div>
+      <div class="body">We’ve finished the UI review. Open the session for details and the next steps.</div>
+    </div></div></div></div>
+    <p class="note">The message has about 460 × 154 px. This is the calm state when only one card is active.</p>
+  </div>
+
+  <div class="option">
+    <div class="option-title"><strong>Multiple cards · side peek</strong><span>Foreground narrows; the next card appears at the right edge.</span></div>
+    <div class="viewport"><div class="screen"><div class="rail">
+      <div class="clock">10:42</div><div class="date">FRI 25 SEP</div><div class="rule"></div>
+      <div class="stat"><span>CPU</span><b>12%</b></div>
+      <div class="stat"><span>MEM</span><b>41%</b></div>
+      <div class="stat"><span>NET</span><b class="good">ONLINE</b></div>
+      <div class="stat"><span>BAT</span><b>79% +</b></div>
+    </div><div class="content side">
+      <div class="peek" role="button" tabindex="0" aria-label="Show next notification"><div class="peek-content"><div class="next">NEXT</div><div class="app">SLACK</div><div class="arrow">›</div></div></div>
+      <div class="primary">
+        <div class="header"><span class="source">CODEX</span><span class="meta"><span class="count">1 of 5</span><span class="dismiss">×</span></span></div>
+        <div class="title">Task completed</div>
+        <div class="body">We’ve finished the UI review. Open the session for details and the next steps.</div>
+      </div>
+    </div></div></div>
+    <p class="note">Click the visible next-card edge to try the deck. Its roughly 70 px exposed area is a plausible touch target; the primary gets 392 × 156 px.</p>
+  </div>
+
+  <script>
+    (() => {
+      const root = document.currentScript.closest('.deck349');
+      const side = root.querySelector('.content.side');
+      const peek = side.querySelector('.peek');
+      const cards = [
+        ['CODEX', 'Task completed', 'We’ve finished the UI review. Open the session for details and the next steps.'],
+        ['SLACK', 'Review comments are in', 'Maya left feedback on the display layout. Please take a look when you have time.'],
+        ['CALENDAR', 'Meeting in 10 minutes', 'Design review starts at 11:00. The meeting link is in the calendar event.'],
+        ['CLAUDE CODE', 'Changes ready', 'The requested updates are complete and ready for a final review.'],
+        ['OPENCODE', 'Build finished', 'The firmware build completed successfully on Snap.']
+      ];
+      let index = 0;
+      const show = () => {
+        const current = cards[index];
+        const next = cards[(index + 1) % cards.length];
+        side.querySelector('.primary .source').textContent = current[0];
+        side.querySelector('.primary .title').textContent = current[1];
+        side.querySelector('.primary .body').textContent = current[2];
+        side.querySelector('.primary .count').textContent = `${index + 1} of ${cards.length}`;
+        side.querySelector('.peek .app').textContent = next[0];
+        peek.setAttribute('aria-label', `Show next notification from ${next[0]}`);
+      };
+      const advance = () => { index = (index + 1) % cards.length; show(); };
+      peek.addEventListener('click', advance);
+      peek.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); advance(); }
+      });
+    })();
+  </script>
+</section>

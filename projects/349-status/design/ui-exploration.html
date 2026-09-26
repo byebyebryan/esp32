@@ -1,0 +1,182 @@
+<section class="desk349-exploration">
+  <style>
+    .desk349-exploration {
+      color: #e8edf3;
+      font: 14px/1.35 system-ui, -apple-system, sans-serif;
+      max-width: 760px;
+    }
+    .desk349-exploration * { box-sizing: border-box; }
+    .desk349-exploration h2 { margin: 0 0 6px; font-size: 20px; }
+    .desk349-exploration .intro { margin: 0 0 18px; color: #aebdca; }
+    .desk349-exploration .concept { margin: 0 0 24px; }
+    .desk349-exploration .concept-head { display: flex; gap: 10px; align-items: baseline; margin-bottom: 8px; }
+    .desk349-exploration .concept-head strong { font-size: 14px; }
+    .desk349-exploration .concept-head span { color: #8ea2b3; font-size: 12px; }
+    .desk349-exploration .viewport { max-width: 100%; overflow-x: auto; border-radius: 10px; }
+    .desk349-exploration .screen {
+      width: 640px;
+      height: 172px;
+      flex: none;
+      overflow: hidden;
+      border: 1px solid #344152;
+      border-radius: 8px;
+      background: #0b1119;
+      box-shadow: inset 0 0 0 1px #080c12;
+      display: flex;
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+    .desk349-exploration .caption { margin: 8px 0 0; color: #aebdca; font-size: 12px; }
+    .desk349-exploration .rail {
+      width: 160px;
+      flex: none;
+      padding: 9px 13px 8px;
+      background: #111b26;
+      border-right: 1px solid #2c3b49;
+      display: flex;
+      flex-direction: column;
+    }
+    .desk349-exploration .rail.third { width: 212px; }
+    .desk349-exploration .clock { font-size: 39px; font-weight: 650; letter-spacing: -2px; line-height: 1; }
+    .desk349-exploration .date { margin-top: 4px; color: #a8bdc9; font-size: 12px; letter-spacing: 1.1px; }
+    .desk349-exploration .rail-rule { height: 1px; background: #334454; margin: 7px 0 5px; }
+    .desk349-exploration .rail-metric { display: flex; justify-content: space-between; font-size: 13px; line-height: 20px; }
+    .desk349-exploration .rail-metric span { color: #91a8b6; }
+    .desk349-exploration .rail-metric b { font-weight: 650; }
+    .desk349-exploration .rail-metric .good { color: #7bd9b7; }
+    .desk349-exploration .idle-content { flex: 1; padding: 14px 17px; display: flex; flex-direction: column; }
+    .desk349-exploration .eyebrow { color: #67d8b0; font-size: 10px; font-weight: 700; letter-spacing: 1.4px; text-transform: uppercase; }
+    .desk349-exploration .idle-metrics { display: flex; gap: 22px; margin-top: 12px; }
+    .desk349-exploration .idle-metric { min-width: 180px; }
+    .desk349-exploration .idle-metric .key { color: #8da8b7; font-size: 11px; letter-spacing: 1px; }
+    .desk349-exploration .idle-metric .value { font-size: 29px; font-weight: 650; line-height: 1.2; }
+    .desk349-exploration .meter { height: 4px; margin-top: 9px; border-radius: 2px; background: #263442; }
+    .desk349-exploration .meter i { display: block; height: 4px; border-radius: 2px; background: #67d8b0; }
+    .desk349-exploration .idle-footer { margin-top: auto; border-top: 1px solid #293947; padding-top: 10px; color: #a7b9c5; font-size: 12px; }
+    .desk349-exploration .idle-footer em { color: #67d8b0; font-style: normal; }
+    .desk349-exploration .focus-card { flex: 1; padding: 14px 16px 11px 18px; border-left: 3px solid #67d8b0; display: flex; flex-direction: column; }
+    .desk349-exploration .card-top { display: flex; justify-content: space-between; align-items: center; }
+    .desk349-exploration .app { color: #67d8b0; font-size: 11px; font-weight: 750; letter-spacing: 1.2px; }
+    .desk349-exploration .age { color: #8096a5; font-size: 11px; }
+    .desk349-exploration .title { margin: 7px 0 5px; font-size: 21px; font-weight: 650; line-height: 1.12; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .desk349-exploration .body-copy { color: #c1ced6; font-size: 18px; line-height: 1.25; }
+    .desk349-exploration .focus-foot { margin-top: auto; display: flex; justify-content: space-between; align-items: center; color: #87a1af; font-size: 11px; }
+    .desk349-exploration .queue { color: #e7f4ef; background: #203c3c; border: 1px solid #3a6f64; padding: 3px 8px; border-radius: 10px; }
+    .desk349-exploration .card-stack { flex: 1; padding: 6px 8px; display: flex; flex-direction: column; gap: 6px; }
+    .desk349-exploration .stack-card { height: 76px; padding: 6px 11px 5px; border-left: 3px solid #67d8b0; background: #14202b; overflow: hidden; }
+    .desk349-exploration .stack-card.second { border-color: #6d8ca4; }
+    .desk349-exploration .stack-card .title { font-size: 17px; margin: 3px 0 2px; }
+    .desk349-exploration .stack-card .body-copy { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .desk349-exploration .wide-screen { flex-direction: column; }
+    .desk349-exploration .wide-card { flex: 1; padding: 12px 19px 8px; border-left: 4px solid #67d8b0; display: flex; flex-direction: column; }
+    .desk349-exploration .wide-card .title { margin-top: 5px; }
+    .desk349-exploration .wide-card .body-copy { max-width: 590px; }
+    .desk349-exploration .wide-rail { height: 30px; flex: none; border-top: 1px solid #2a3c49; background: #111b26; padding: 5px 17px; color: #b4c5ce; font-size: 12px; display: flex; gap: 20px; }
+    .desk349-exploration .wide-rail b { color: #edf2f5; }
+  </style>
+  <h2>349 status · screen directions</h2>
+  <p class="intro">Pixel-sized 640 × 172 sketches. Values and notifications are illustrative.</p>
+
+  <div class="concept">
+    <div class="concept-head"><strong>A · horizontal, idle</strong><span>Time and essential stats stay on the left; other status uses the open area.</span></div>
+    <div class="viewport"><div class="screen">
+      <div class="rail">
+        <div class="clock">10:42</div><div class="date">FRI 25 SEP</div>
+        <div class="rail-rule"></div>
+        <div class="rail-metric"><span>CPU</span><b>12%</b></div>
+        <div class="rail-metric"><span>MEM</span><b>41%</b></div>
+        <div class="rail-metric"><span>NET</span><b class="good">ONLINE</b></div>
+      </div>
+      <div class="idle-content">
+        <div class="eyebrow">Other status</div>
+        <div class="idle-metrics">
+          <div class="idle-metric"><div class="key">BLUETOOTH</div><div class="value">2 devices</div></div>
+          <div class="idle-metric"><div class="key">VOLUME</div><div class="value">42%</div></div>
+        </div>
+        <div class="idle-footer"><em>●</em> No active notifications</div>
+      </div>
+    </div></div>
+    <p class="caption">Idle details are secondary. Battery appears only on a host with a battery; absent features leave no placeholder.</p>
+  </div>
+
+  <div class="concept">
+    <div class="concept-head"><strong>A · horizontal, one notification</strong><span>Snap: battery joins the 160 px rail; text gets the remaining 480 px.</span></div>
+    <div class="viewport"><div class="screen">
+      <div class="rail">
+        <div class="clock">10:42</div><div class="date">FRI 25 SEP</div>
+        <div class="rail-rule"></div>
+        <div class="rail-metric"><span>CPU</span><b>12%</b></div>
+        <div class="rail-metric"><span>MEM</span><b>41%</b></div>
+        <div class="rail-metric"><span>NET</span><b class="good">ONLINE</b></div>
+        <div class="rail-metric"><span>BAT</span><b>79% +</b></div>
+      </div>
+      <div class="focus-card">
+        <div class="card-top"><span class="app">CODEX</span><span class="age">now</span></div>
+        <div class="title">Task completed</div>
+        <div class="body-copy">We’ve finished the UI review. Open the session for details and the next steps.</div>
+        <div class="focus-foot"><span>Tap card to dismiss</span></div>
+      </div>
+    </div></div>
+    <p class="caption">A single card uses the full height for title and body. Dismissal reveals the next active notification.</p>
+  </div>
+
+  <div class="concept">
+    <div class="concept-head"><strong>A · one-third rail comparison</strong><span>212 px for status leaves 428 px for the same notification.</span></div>
+    <div class="viewport"><div class="screen">
+      <div class="rail third">
+        <div class="clock">10:42</div><div class="date">FRI 25 SEP</div>
+        <div class="rail-rule"></div>
+        <div class="rail-metric"><span>CPU</span><b>12%</b></div>
+        <div class="rail-metric"><span>MEM</span><b>41%</b></div>
+        <div class="rail-metric"><span>NET</span><b class="good">ONLINE</b></div>
+        <div class="rail-metric"><span>BAT</span><b>79% +</b></div>
+      </div>
+      <div class="focus-card">
+        <div class="card-top"><span class="app">CODEX</span><span class="age">now</span></div>
+        <div class="title">Task completed</div>
+        <div class="body-copy">We’ve finished the UI review. Open the session for details and the next steps.</div>
+        <div class="focus-foot"><span>Tap card to dismiss</span></div>
+      </div>
+    </div></div>
+    <p class="caption">The extra 52 px on the left do little for these stats while reducing the reading area.</p>
+  </div>
+
+  <div class="concept">
+    <div class="concept-head"><strong>A · horizontal, notification burst</strong><span>Two 76 px cards remain scannable; the queue count stays visible.</span></div>
+    <div class="viewport"><div class="screen">
+      <div class="rail">
+        <div class="clock">10:42</div><div class="date">FRI 25 SEP</div>
+        <div class="rail-rule"></div>
+        <div class="rail-metric"><span>CPU</span><b>12%</b></div>
+        <div class="rail-metric"><span>MEM</span><b>41%</b></div>
+        <div class="rail-metric"><span>NET</span><b class="good">ONLINE</b></div>
+        <div class="rail-metric"><span>BAT</span><b>79% +</b></div>
+      </div>
+      <div class="card-stack">
+        <div class="stack-card">
+          <div class="card-top"><span class="app">CODEX</span><span class="age">now</span></div>
+          <div class="title">Task completed</div>
+          <div class="body-copy">We’ve finished the UI review and the branch is ready.</div>
+        </div>
+        <div class="stack-card second">
+          <div class="card-top"><span class="app">GOOGLE CALENDAR</span><span class="age">+10 more</span></div>
+          <div class="title">Meeting in 10 minutes</div>
+          <div class="body-copy">Design review with the team, 11:00–11:30.</div>
+        </div>
+      </div>
+    </div></div>
+    <p class="caption">When the stack grows, each card has less body text; tap dismissal can surface the next active card.</p>
+  </div>
+
+  <div class="concept">
+    <div class="concept-head"><strong>B · full-width alert</strong><span>Alternative: maximum reading width, with a compact status rail below.</span></div>
+    <div class="viewport"><div class="screen wide-screen">
+      <div class="wide-card">
+        <div class="card-top"><span class="app">CODEX</span><span class="age">now &nbsp;·&nbsp; +2 active</span></div>
+        <div class="title">Task completed</div>
+        <div class="body-copy">We’ve finished the UI review. Open the session for details. The wider line leaves more room for longer Chrome, Slack, and calendar text.</div>
+      </div>
+      <div class="wide-rail"><b>10:42</b><span>CPU 12%</span><span>MEM 41%</span><span>NET online</span></div>
+    </div></div>
+    <p class="caption">More text fits, though the status position and scale change whenever a notification arrives.</p>
+  </div>
+</section>

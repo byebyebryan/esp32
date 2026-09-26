@@ -133,6 +133,82 @@ in its checkout; no diagnostic firmware edits remain. The cause of the initial
 no-card state was not established. This is a second-board smoke check, not a
 repeat of all v1 short gates or a long-duration stability check.
 
+### Snap display-freeze follow-up — 2026-09-25 PDT
+
+Later, Snap's clock and cards stopped updating while `349d` remained linked,
+its revision continued advancing, and the board continued printing its
+ten-second `alive, host=yes` line. The recent device log contained no frame
+profiling lines. Source review found a concrete deadlock risk in the shared
+display driver: it allows two panel transfers in flight but used a binary
+completion semaphore, so two callbacks arriving before a wait could collapse
+into one signal and leave the LVGL task waiting indefinitely. A task backtrace
+was not captured, so this remains the likely cause rather than a proven
+runtime stack trace.
+
+The driver now uses a counting semaphore for the two outstanding transfers,
+checks panel draw errors, and restarts after a logged two-second DMA completion
+timeout instead of waiting forever. Both local `349-status` and `349-hello`
+firmware builds and Snap's `349-status` build passed. Snap's board was flashed
+and reconnected with `hello.build_sha=c4abf317e` (`8647e99-dirty`). The user
+confirmed that its clock and notifications update again; subsequent device
+logs showed frame flushes and normal `alive` lines. This is a short recovery
+check, not evidence of long-duration stability.
+
+### Snap active-card cache gate — 2026-09-25 PDT
+
+The capability-gated cache runs on Snap's ESP32-S3 board while the desktop
+mirror is temporarily disabled to isolate injected cards. The current app
+image on that board was verified after flashing; its device hello reports
+`build_sha=2e83e441b`, and the image on Snap has SHA-256
+`f3b712fb9b4d696d2685f8bc825c09974aeec57dc2172f73b166390bea119aba`.
+The preceding app image was backed up at
+`projects/349-status/build/pre-card-cache-app.bin` on Snap before the first
+cache flash. These observations were collected before the host and firmware
+worktree changes were committed. Both Starship and Snap host suites pass
+**105 tests**, and both firmware builds pass.
+
+The first cache firmware reported the exact newest 20 IDs with no overflow,
+then the newest 32 of 33 active IDs with overflow one. After a middle card
+expired, the host refilled the cache with the formerly omitted older ID; the
+device readback matched the host-selected 32 IDs and overflow returned to
+zero. Four repeated full transfers with 32 cards committed without a new
+parse error, and later expiry removed them all. This was a controlled host
+reconnect and reload exercise, not a physical USB replug.
+
+Review then found that an incremental arrival could exceed a configured
+`cache_limit` below the physical 32-card capacity, and that a bad transfer
+could request redundant resyncs for its queued tail. The final build carries
+an effective limit in `sync_begin`, enforces that limit for deltas, and
+discards the tail of a failed transaction. A per-boot hello ID avoids the
+duplicate full sync observed during the controlled reconnect. On the final
+board build, `cache_limit=8` with nine arrivals produced the expected newest
+eight IDs and overflow one; `cache_limit=0` with one arrival produced zero
+cached IDs and overflow one. A fresh 20-card set matched all 20 ordered IDs
+before the physical replug check. The final build's observed minimum heap
+after that burst was 75,835 bytes internal and 7,923,996 bytes PSRAM; alive
+logs showed 91–93% core 0 idle and 99–100% core 1 idle in this short window.
+
+For the physical replug, the monitor observed link down at 14:39:00 PDT and
+link up at 14:39:04. The board's next full transfer committed 20 cards, and
+readback returned the same 20 ordered IDs (`100010`–`100029`) with overflow
+zero. The user saw the cards and bar return; no stale overlay was reported. The
+cards disappeared afterward because their three-minute injected expiry elapsed;
+the host then reported zero active cards. A separate two-minute card was
+locally dismissed by tapping: the user saw it hide while the bar stayed, and
+host status still showed one active notification with its ID in the device
+cache. These are short physical and visual checks, not a long soak.
+
+With the host's serial link paused, a direct board probe committed one card,
+sent an out-of-order chunk plus the remaining tail of a second transfer, and
+queried the device. It emitted exactly one resync request and kept the prior
+committed ID. A subsequent valid transfer committed two expected IDs. The
+normal host service then restarted and linked to the same firmware; the
+original Snap config was restored byte for byte, notification mirroring is
+active, and host/device active-card counts returned to zero.
+
+The current two-card visual layout is unchanged. This gate validates cache
+state and transport behavior; the side-peek UI is the next separate goal.
+
 ### Deferred checks and limits
 
 - The 24-hour connected soak was stopped at the user's request because its
